@@ -1,0 +1,104 @@
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.db import FinancialProfile, Transaction, User, Wallet, get_db
+from app.services.fire_engine import calculate_fire_metrics, get_asset_allocation_recommendation
+from app.services.planner_skills_loader import get_confirmed_fields_set, save_confirmed_fields_set
+from app.auth import get_current_user
+
+router = APIRouter(prefix="/fire", tags=["FIRE & Financial Freedom"])
+
+
+class UpdateFIREProfileRequest(BaseModel):
+    current_age: int
+    target_fire_age: int
+    monthly_living_expense: float
+    risk_tolerance: str = "MODERATE"
+
+
+class CalculateFIRERequest(BaseModel):
+    current_age: int
+    target_fire_age: int
+    monthly_expenses: float
+    current_net_worth: float
+    monthly_savings: float = 0.0
+    annual_return_rate: float = 0.07
+
+
+@router.get("/profile")
+def get_fire_profile(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    profile = db.query(FinancialProfile).filter(FinancialProfile.user_id == current_user.id).first()
+    if not profile:
+        profile = FinancialProfile(user_id=current_user.id)
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+
+    wallets = db.query(Wallet).filter(Wallet.user_id == current_user.id, Wallet.is_archived == False).all()
+    net_worth = sum(w.balance for w in wallets)
+
+    metrics = calculate_fire_metrics(
+        current_age=profile.current_age,
+        target_fire_age=profile.target_fire_age,
+        monthly_expenses=profile.monthly_living_expense,
+        current_net_worth=net_worth,
+        monthly_savings=0.0,
+    )
+    allocations = get_asset_allocation_recommendation(
+        profile.risk_tolerance,
+        sharia_preference=bool(getattr(profile, "sharia_preference", False)),
+    )
+
+    return {
+        "profile": {
+            "current_age": profile.current_age,
+            "target_fire_age": profile.target_fire_age,
+            "monthly_living_expense": profile.monthly_living_expense,
+            "risk_tolerance": profile.risk_tolerance,
+        },
+        "metrics": metrics,
+        "allocations": allocations,
+    }
+
+
+@router.put("/profile")
+def update_fire_profile(
+    req: UpdateFIREProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    profile = db.query(FinancialProfile).filter(FinancialProfile.user_id == current_user.id).first()
+    if not profile:
+        profile = FinancialProfile(user_id=current_user.id)
+        db.add(profile)
+
+    profile.current_age = req.current_age
+    profile.target_fire_age = req.target_fire_age
+    profile.monthly_living_expense = req.monthly_living_expense
+    profile.risk_tolerance = req.risk_tolerance.upper()
+    profile.fire_target_amount = req.monthly_living_expense * 12 * 25
+
+    confirmed = get_confirmed_fields_set(profile)
+    confirmed.update({"age_and_retirement", "monthly_living_expense", "risk_profile"})
+    save_confirmed_fields_set(profile, confirmed)
+
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@router.post("/calculate")
+def calculate_custom_fire(req: CalculateFIRERequest):
+    """Calculates FIRE simulation on the fly with custom parameters."""
+    metrics = calculate_fire_metrics(
+        current_age=req.current_age,
+        target_fire_age=req.target_fire_age,
+        monthly_expenses=req.monthly_expenses,
+        current_net_worth=req.current_net_worth,
+        monthly_savings=req.monthly_savings,
+        annual_return_rate=req.annual_return_rate,
+    )
+    return metrics
+

@@ -1,0 +1,78 @@
+services:
+  # 🐘 Skenario B: Local PostgreSQL Database Container
+  db:
+    image: postgres:16-alpine
+    container_name: ai_finance_db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-ai_finance}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-ai_finance}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ⚙️ Backend API & 9router AI Engine (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ai_finance_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Skenario B: Terhubung ke service db lokal di dalam docker-compose
+      # (Atau ganti ke IP remote: postgresql://user:pass@103.xxx.xxx.xxx:5432/ai_finance)
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:password@db:5432/ai_finance}
+      - SECRET_KEY=${SECRET_KEY:-ai-finance-super-secret-key-change-in-production}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@aifinance.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-AdminPassword123!}
+      # 9router API Configuration (OpenAI-compatible)
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:8080/v1}
+      - LLM_API_KEY=${LLM_API_KEY:-placeholder_key}
+      - LLM_MODEL_NAME=${LLM_MODEL_NAME:-gpt-4o}
+      - LLM_TIMEOUT=60.0
+      # Bot Webhooks
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - WHATSAPP_TOKEN=${WHATSAPP_TOKEN:-}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID:-}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN:-ai-finance-wa-verify}
+      - ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+
+  # 🎨 Frontend Web Dashboard (Next.js 14)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ai_finance_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_INTERNAL_URL=http://backend:8000
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+    driver: local
