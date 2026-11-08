@@ -88,7 +88,11 @@ export default function BudgetsAllocationPage() {
   const [showRenameGroupModal, setShowRenameGroupModal] = useState<string | null>(null);
   const [showCustomCatModal, setShowCustomCatModal] = useState<boolean>(false);
   const [showQuickWalletModal, setShowQuickWalletModal] = useState<boolean>(false);
-  const [recordActionModal, setRecordActionModal] = useState<{ item: Budget; mode: "EXPENSE" | "FUND_SINKING" } | null>(null);
+  const [recordActionModal, setRecordActionModal] = useState<{
+    item: Budget;
+    mode: "EXPENSE" | "FUND_SINKING" | "TRANSFER_ALLOCATION";
+  } | null>(null);
+  const [actionSourceWalletId, setActionSourceWalletId] = useState("");
 
   // Group Management States
   const [budgetGroups, setBudgetGroups] = useState<BudgetGroupItem[]>([]);
@@ -376,11 +380,13 @@ export default function BudgetsAllocationPage() {
       mode: recordActionModal.mode,
       amount: !isNaN(amt) && amt > 0 ? amt : undefined,
       wallet_id: actionWalletId || recordActionModal.item.wallet_id || undefined,
+      source_wallet_id: recordActionModal.mode === "TRANSFER_ALLOCATION" ? (actionSourceWalletId || undefined) : undefined,
       description: actionDesc.trim() || undefined,
     });
     setRecordActionModal(null);
     setActionAmount("");
     setActionDesc("");
+    setActionSourceWalletId("");
     refreshData(monthKey);
   };
 
@@ -838,14 +844,38 @@ export default function BudgetsAllocationPage() {
                             {item.remark || "—"}
                           </td>
                           <td className="py-2.5 px-4">
-                            {item.wallet ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-secondary border border-border text-xs font-semibold text-foreground">
-                                <span
-                                  className="w-2 h-2 rounded-full"
-                                  style={{ backgroundColor: item.wallet.color }}
-                                />
-                                {item.wallet.name}
-                              </span>
+                            {item.is_same_as_payroll ? (
+                              <div className="flex flex-col gap-0.5">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#f0b000]/15 border border-[#f0b000]/30 text-[10px] font-bold text-[#8a6300] dark:text-[#f0b000] w-fit">
+                                  ⭐ Rekening Gajian
+                                </span>
+                                <span className="text-[10px] text-muted-foreground">{item.wallet?.name || "Langsung Tanpa Transfer"}</span>
+                              </div>
+                            ) : item.wallet ? (
+                              <div className="flex flex-col gap-1">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-secondary border border-border text-xs font-semibold text-foreground w-fit">
+                                  <span
+                                    className="w-2 h-2 rounded-full"
+                                    style={{ backgroundColor: item.wallet.color }}
+                                  />
+                                  {item.wallet.name}
+                                </span>
+                                {item.funding_status === "FUNDED" && (
+                                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded-md border border-emerald-500/20 w-fit">
+                                    ✓ Funded
+                                  </span>
+                                )}
+                                {item.funding_status === "PARTIAL" && (
+                                  <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded-md border border-amber-500/20 w-fit">
+                                    Sebagian ({formatCurrency(item.funded_this_month)})
+                                  </span>
+                                )}
+                                {item.funding_status === "UNFUNDED" && (
+                                  <span className="text-[10px] text-rose-600 dark:text-rose-400 font-bold bg-rose-500/10 px-1.5 py-0.5 rounded-md border border-rose-500/20 w-fit">
+                                    Belum Ditransfer
+                                  </span>
+                                )}
+                              </div>
                             ) : (
                               <span className="text-xs text-muted-foreground italic">Belum Dipilih</span>
                             )}
@@ -855,12 +885,42 @@ export default function BudgetsAllocationPage() {
                             —
                           </td>
                           <td className="py-2.5 px-4 text-center">
-                            <div className="flex items-center justify-center gap-1">
+                            <div className="flex items-center justify-center gap-1 flex-wrap">
+                              {!item.is_same_as_payroll && item.wallet_id && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRecordActionModal({ item, mode: "TRANSFER_ALLOCATION" });
+                                    setActionAmount(
+                                      (item.unfunded_amount !== undefined && item.unfunded_amount > 0
+                                        ? item.unfunded_amount
+                                        : item.limit_amount
+                                      ).toString()
+                                    );
+                                    setActionSourceWalletId(
+                                      allocationData?.payroll_wallet_id ||
+                                        wallets.find((w) => w.is_default)?.id ||
+                                        wallets[0]?.id ||
+                                        ""
+                                    );
+                                    setActionDesc(`Transfer Alokasi Pos ${item.name}`);
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-primary/10 hover:bg-primary/20 text-[#8a6300] dark:text-[#f0b000] border border-[#f0b000]/30 text-[10px] font-bold flex items-center gap-1"
+                                  title="Transfer dana pos dari Rekening Gajian ke dompet ini"
+                                >
+                                  <ArrowLeftRight className="w-3 h-3" />
+                                  <span>Transfer Pos</span>
+                                </button>
+                              )}
                               {item.is_sinking_fund ? (
                                 <>
                                   <button
                                     type="button"
-                                    onClick={() => setRecordActionModal({ item, mode: "FUND_SINKING" })}
+                                    onClick={() => {
+                                      setRecordActionModal({ item, mode: "FUND_SINKING" });
+                                      setActionAmount(item.limit_amount.toString());
+                                      setActionDesc(`Sisihkan ${item.name}`);
+                                    }}
                                     className="px-2 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-bold"
                                     title="Tandai Sisihkan Bulan Ini"
                                   >
@@ -868,7 +928,11 @@ export default function BudgetsAllocationPage() {
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => setRecordActionModal({ item, mode: "EXPENSE" })}
+                                    onClick={() => {
+                                      setRecordActionModal({ item, mode: "EXPENSE" });
+                                      setActionAmount("");
+                                      setActionDesc(`Pakai ${item.name}`);
+                                    }}
                                     className="px-2 py-1 rounded-lg bg-secondary hover:bg-accent text-foreground border border-border text-[10px] font-bold"
                                     title="Pakai Dana Sinking Fund"
                                   >
@@ -878,9 +942,13 @@ export default function BudgetsAllocationPage() {
                               ) : (
                                 <button
                                   type="button"
-                                  onClick={() => setRecordActionModal({ item, mode: "EXPENSE" })}
+                                  onClick={() => {
+                                    setRecordActionModal({ item, mode: "EXPENSE" });
+                                    setActionAmount("");
+                                    setActionDesc(`Bayar ${item.name}`);
+                                  }}
                                   className="px-2 py-1 rounded-lg bg-secondary hover:bg-accent text-foreground border border-border text-[10px] font-bold"
-                                  title="Catat Realisasi Pengeluaran Cepat"
+                                  title="Catat Realisasi Belanja dari Dompet Pos"
                                 >
                                   Bayar
                                 </button>
@@ -1770,29 +1838,92 @@ export default function BudgetsAllocationPage() {
         </div>
       )}
 
-      {/* Modal: Aksi Cepat Baris (Bayar / Sisihkan / Pakai) */}
+      {/* Modal: Aksi Cepat Baris (Bayar / Sisihkan / Pakai / Transfer Pos) */}
       {recordActionModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
-            <h2 className="text-base font-bold text-foreground">
-              {recordActionModal.mode === "FUND_SINKING"
+            <h2 className="text-base font-bold text-foreground flex items-center gap-1.5">
+              {recordActionModal.mode === "TRANSFER_ALLOCATION" && <ArrowLeftRight className="w-4 h-4 text-primary" />}
+              {recordActionModal.mode === "TRANSFER_ALLOCATION"
+                ? `Transfer Alokasi: ${recordActionModal.item.name}`
+                : recordActionModal.mode === "FUND_SINKING"
                 ? `Sisihkan Dana: ${recordActionModal.item.name}`
                 : `Catat Realisasi Pengeluaran: ${recordActionModal.item.name}`}
             </h2>
             <form onSubmit={handleExecuteAction} className="space-y-3">
               <div>
-                <label className="font-semibold text-foreground block mb-1">Nominal (Rp)</label>
+                <label className="font-semibold text-foreground block mb-1">
+                  {recordActionModal.mode === "TRANSFER_ALLOCATION"
+                    ? "Nominal Transfer Alokasi (Rp)"
+                    : "Nominal (Rp)"}
+                </label>
                 <input
                   type="number"
-                  placeholder={recordActionModal.item.limit_amount.toString()}
+                  placeholder={
+                    recordActionModal.mode === "TRANSFER_ALLOCATION" &&
+                    recordActionModal.item.unfunded_amount !== undefined &&
+                    recordActionModal.item.unfunded_amount > 0
+                      ? recordActionModal.item.unfunded_amount.toString()
+                      : recordActionModal.item.limit_amount.toString()
+                  }
                   value={actionAmount}
                   onChange={(e) => setActionAmount(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-foreground font-mono font-bold"
                 />
                 <span className="text-[10px] text-muted-foreground">
-                  Kosongkan bila nominal sesuai limit ({formatCurrency(recordActionModal.item.limit_amount)})
+                  {recordActionModal.mode === "TRANSFER_ALLOCATION"
+                    ? `Sisa belum ditransfer: ${formatCurrency(recordActionModal.item.unfunded_amount ?? recordActionModal.item.limit_amount)}`
+                    : `Limit anggaran: ${formatCurrency(recordActionModal.item.limit_amount)}`}
                 </span>
               </div>
+
+              {recordActionModal.mode === "TRANSFER_ALLOCATION" && (
+                <>
+                  <div>
+                    <label className="font-semibold text-foreground block mb-1">
+                      Dari Dompet Sumber (Rekening Gajian)
+                    </label>
+                    <select
+                      value={
+                        actionSourceWalletId ||
+                        allocationData?.payroll_wallet_id ||
+                        wallets.find((w) => w.is_default)?.id ||
+                        wallets[0]?.id ||
+                        ""
+                      }
+                      onChange={(e) => setActionSourceWalletId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-foreground font-semibold"
+                    >
+                      {wallets
+                        .filter(
+                          (w) =>
+                            w.access_role !== "VIEWER" &&
+                            w.id !== recordActionModal.item.wallet_id
+                        )
+                        .map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.is_default ? "⭐ " : ""}
+                            {w.name} (Saldo: {formatCurrency(w.balance)})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-foreground block mb-1">
+                      Ke Dompet Tujuan Pos
+                    </label>
+                    <div className="p-2.5 rounded-xl bg-secondary/70 border border-border flex items-center justify-between">
+                      <span className="font-bold text-foreground">
+                        {recordActionModal.item.wallet?.name || "Dompet Tujuan"}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground font-mono">
+                        Saldo: {formatCurrency(recordActionModal.item.wallet?.balance || 0)}
+                      </span>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {recordActionModal.mode === "EXPENSE" && (
                 <div>
@@ -1815,7 +1946,11 @@ export default function BudgetsAllocationPage() {
                 <label className="font-semibold text-foreground block mb-1">Deskripsi Tambahan</label>
                 <input
                   type="text"
-                  placeholder={`Realisasi ${recordActionModal.item.name}`}
+                  placeholder={
+                    recordActionModal.mode === "TRANSFER_ALLOCATION"
+                      ? `Transfer Alokasi Pos ${recordActionModal.item.name}`
+                      : `Realisasi ${recordActionModal.item.name}`
+                  }
                   value={actionDesc}
                   onChange={(e) => setActionDesc(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-foreground"
@@ -1832,9 +1967,9 @@ export default function BudgetsAllocationPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-primary text-primary-foreground font-bold"
+                  className="px-5 py-2 rounded-xl bg-primary text-primary-foreground font-bold shadow-sm shadow-[#f0b000]/20 hover:bg-primary/90"
                 >
-                  Eksekusi
+                  {recordActionModal.mode === "TRANSFER_ALLOCATION" ? "Transfer Sekarang" : "Eksekusi"}
                 </button>
               </div>
             </form>

@@ -17,6 +17,9 @@ from app.db import (
     Wallet,
     ensure_user_default_groups,
     get_db,
+    get_accessible_wallets,
+    get_accessible_wallet_by_id,
+    get_wallet_role,
 )
 
 router = APIRouter(prefix="/budgets", tags=["Budgets & Categories"])
@@ -136,8 +139,8 @@ def compute_budget_spent_map(
     Computes exact spending per budget row in `month_key` without double counting:
     1. Any EXPENSE transaction in `month_key` with `tx.budget_id == b.id` counts toward `b`.
     2. Legacy fallback: if `tx.budget_id is None` and `tx.category_id == b.category_id`,
-       count it ONLY when `b` is the sole budget row mapped to `b.category_id` in `month_key`
-       (or `b.name == b.category.name`), avoiding double counting across multiple items sharing a category.
+       first matches a row with the same `wallet_id`, or sole category row,
+       avoiding double counting across multiple items sharing a category.
     """
     month_expenses = [
         t for t in transactions
@@ -156,9 +159,12 @@ def compute_budget_spent_map(
         if tx.budget_id and tx.budget_id in budget_ids:
             spent_map[tx.budget_id] += tx.amount_in_base
         elif not tx.budget_id and tx.category_id:
-            # Find sole or exact-category-named row
+            # Find candidate rows matching category
             candidates = [b for b in budgets if b.category_id == tx.category_id]
-            if len(candidates) == 1:
+            wallet_matched = [b for b in candidates if b.wallet_id and b.wallet_id == tx.wallet_id]
+            if len(wallet_matched) == 1:
+                spent_map[wallet_matched[0].id] += tx.amount_in_base
+            elif len(candidates) == 1:
                 only_b = candidates[0]
                 if not only_b.is_sinking_fund:
                     spent_map[only_b.id] += tx.amount_in_base
@@ -173,7 +179,7 @@ def compute_budget_spent_map(
     return spent_map
 
 
-def serialize_budget_item(b: Budget, spent_amount: float) -> Dict[str, Any]:
+def serialize_budget_item(b: Budget, spent_amount: float, default_payroll_wallet_id: Optional[str] = None) -> Dict[str, Any]:
     limit_amt = float(b.limit_amount or 0.0)
     rollover = float(b.rollover_balance or 0.0)
     funded = float(b.funded_this_month or 0.0)
@@ -181,17 +187,32 @@ def serialize_budget_item(b: Budget, spent_amount: float) -> Dict[str, Any]:
     item_name = (b.name or (b.category.name if b.category else "Pos Anggaran")).strip()
     grp = (b.group_type or "LIVING NEEDS").strip().upper()
 
+    is_same_as_payroll = bool(b.wallet_id and default_payroll_wallet_id and b.wallet_id == default_payroll_wallet_id)
+
     if sinking:
         accumulated = max(0.0, rollover + funded - spent_amount)
-        # Progress for sinking fund this month: funded vs monthly budget target
         pct_used = min(100.0, round((funded / limit_amt) * 100, 1)) if limit_amt > 0 else 0.0
         remaining = round(max(0.0, limit_amt - funded), 2)
         is_over = spent_amount > (rollover + max(limit_amt, funded)) and spent_amount > 0
+        funding_status = "FUNDED" if funded >= limit_amt and limit_amt > 0 else ("PARTIAL" if funded > 0 else "UNFUNDED")
+        unfunded = 0.0 if funded >= limit_amt else round(max(0.0, limit_amt - funded), 2)
     else:
         accumulated = 0.0
         pct_used = min(100.0, round((spent_amount / limit_amt) * 100, 1)) if limit_amt > 0 else 0.0
         remaining = round(max(0.0, limit_amt - spent_amount), 2)
         is_over = spent_amount > limit_amt and limit_amt > 0
+        if is_same_as_payroll:
+            funding_status = "PAYROLL_DIRECT"
+            unfunded = 0.0
+        elif funded >= limit_amt and limit_amt > 0:
+            funding_status = "FUNDED"
+            unfunded = 0.0
+        elif funded > 0:
+            funding_status = "PARTIAL"
+            unfunded = round(max(0.0, limit_amt - funded), 2)
+        else:
+            funding_status = "UNFUNDED"
+            unfunded = round(limit_amt, 2)
 
     return {
         "id": b.id,
@@ -211,6 +232,9 @@ def serialize_budget_item(b: Budget, spent_amount: float) -> Dict[str, Any]:
         "accumulated_balance": round(accumulated, 2),
         "sort_order": b.sort_order or 0,
         "wallet_id": b.wallet_id,
+        "is_same_as_payroll": is_same_as_payroll,
+        "funding_status": funding_status,
+        "unfunded_amount": unfunded,
         "wallet": (
             {
                 "id": b.wallet.id,
@@ -262,14 +286,18 @@ def compute_monthly_allocation_data(
         if r[0]
     ]
 
-    wallets = (
-        db.query(Wallet)
-        .filter(Wallet.user_id == user.id, Wallet.is_archived == False)
-        .order_by(Wallet.created_at.asc())
+    wallets = get_accessible_wallets(db, user.id, min_role="VIEWER")
+    acc_wallet_ids = [w.id for w in wallets]
+    transactions = (
+        db.query(Transaction)
+        .filter((Transaction.user_id == user.id) | (Transaction.wallet_id.in_(acc_wallet_ids)))
         .all()
     )
-    transactions = db.query(Transaction).filter(Transaction.user_id == user.id).all()
     profile = db.query(FinancialProfile).filter(FinancialProfile.user_id == user.id).first()
+
+    payroll_wallet = next((w for w in wallets if w.user_id == user.id and w.is_default), None)
+    payroll_wallet_id = payroll_wallet.id if payroll_wallet else None
+    payroll_wallet_name = payroll_wallet.name if payroll_wallet else None
 
     month_tx_income = sum(
         t.amount_in_base for t in transactions if t.type == "INCOME" and _tx_in_month(t, mk)
@@ -285,7 +313,7 @@ def compute_monthly_allocation_data(
         income_source = "UNSET"
 
     spent_map = compute_budget_spent_map(budgets, transactions, mk)
-    serialized_items = [serialize_budget_item(b, spent_map.get(b.id, 0.0)) for b in budgets]
+    serialized_items = [serialize_budget_item(b, spent_map.get(b.id, 0.0), payroll_wallet_id) for b in budgets]
 
     # Group configuration and ordering from user's budget_groups table
     user_groups = ensure_user_default_groups(db, user.id)
@@ -383,6 +411,8 @@ def compute_monthly_allocation_data(
         "has_previous_month_template": prev_count > 0,
         "reference_income": round(reference_income, 2),
         "income_source": income_source,
+        "payroll_wallet_id": payroll_wallet_id,
+        "payroll_wallet_name": payroll_wallet_name,
         "group_presets": ordered_group_names,
         "groups": groups_out,
         "wallet_allocations": wallet_allocations,
@@ -500,9 +530,10 @@ class DistributePaydayRequest(BaseModel):
 
 
 class RecordBudgetActionRequest(BaseModel):
-    mode: str = "EXPENSE"  # EXPENSE | FUND_SINKING
+    mode: str = "EXPENSE"  # EXPENSE | FUND_SINKING | TRANSFER_ALLOCATION
     amount: Optional[float] = None
     wallet_id: Optional[str] = None
+    source_wallet_id: Optional[str] = None
     description: Optional[str] = None
 
 
@@ -1089,23 +1120,103 @@ def record_budget_action(
         budget.funded_this_month = round(amt, 2)
         db.commit()
         db.refresh(budget)
-        transactions = db.query(Transaction).filter(Transaction.user_id == current_user.id).all()
+        acc_wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+        acc_wallet_ids = [w.id for w in acc_wallets]
+        transactions = (
+            db.query(Transaction)
+            .filter((Transaction.user_id == current_user.id) | (Transaction.wallet_id.in_(acc_wallet_ids)))
+            .all()
+        )
         mk = budget.month_key or get_current_month_key()
         spent_map = compute_budget_spent_map([budget], transactions, mk)
+        payroll_w = next((w for w in acc_wallets if w.user_id == current_user.id and w.is_default), None)
         return {
             "mode": "FUND_SINKING",
-            "item": serialize_budget_item(budget, spent_map.get(budget.id, 0.0)),
+            "item": serialize_budget_item(budget, spent_map.get(budget.id, 0.0), payroll_w.id if payroll_w else None),
+        }
+
+    if mode == "TRANSFER_ALLOCATION":
+        target_wallet_id = budget.wallet_id or req.wallet_id
+        if not target_wallet_id:
+            raise HTTPException(status_code=400, detail="Pos anggaran ini belum dihubungkan ke dompet tujuan (Fund Location)")
+
+        dest_res = get_accessible_wallet_by_id(db, current_user.id, target_wallet_id, min_role="EDITOR")
+        if not dest_res:
+            raise HTTPException(status_code=403, detail="Anda tidak memiliki izin Editor pada dompet tujuan")
+        dest_wallet, _ = dest_res
+
+        # Resolve payroll or custom source wallet
+        source_wallet = None
+        if req.source_wallet_id:
+            src_res = get_accessible_wallet_by_id(db, current_user.id, req.source_wallet_id, min_role="EDITOR")
+            if src_res:
+                source_wallet, _ = src_res
+        if not source_wallet:
+            source_wallet = (
+                db.query(Wallet)
+                .filter(Wallet.user_id == current_user.id, Wallet.is_default == True, Wallet.is_archived == False)
+                .first()
+            )
+        if not source_wallet:
+            source_wallet = (
+                db.query(Wallet)
+                .filter(Wallet.user_id == current_user.id, Wallet.is_archived == False)
+                .order_by(Wallet.created_at.asc())
+                .first()
+            )
+        if not source_wallet:
+            raise HTTPException(status_code=400, detail="Dompet sumber gajian tidak ditemukan")
+
+        if source_wallet.id == dest_wallet.id:
+            raise HTTPException(status_code=400, detail="Dompet sumber dan dompet tujuan sama. Belanja untuk pos ini langsung memotong rekening gajian tanpa perlu transfer.")
+
+        source_wallet.balance -= round(amt, 2)
+        dest_wallet.balance += round(amt, 2)
+        budget.funded_this_month = round((budget.funded_this_month or 0.0) + amt, 2)
+
+        item_label = budget.name or (budget.category.name if budget.category else "Pos Anggaran")
+        tx = Transaction(
+            user_id=current_user.id,
+            wallet_id=source_wallet.id,
+            to_wallet_id=dest_wallet.id,
+            budget_id=budget.id,
+            type="TRANSFER",
+            amount=round(amt, 2),
+            currency=source_wallet.currency,
+            amount_in_base=round(amt, 2),
+            description=(req.description or "").strip() or f"Transfer Alokasi Pos {item_label} ({source_wallet.name} -> {dest_wallet.name})",
+            raw_source="WEB",
+            transaction_date=datetime.now(timezone.utc),
+        )
+        db.add(tx)
+        db.commit()
+        db.refresh(budget)
+
+        acc_wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+        acc_wallet_ids = [w.id for w in acc_wallets]
+        transactions = (
+            db.query(Transaction)
+            .filter((Transaction.user_id == current_user.id) | (Transaction.wallet_id.in_(acc_wallet_ids)))
+            .all()
+        )
+        mk = budget.month_key or get_current_month_key()
+        spent_map = compute_budget_spent_map([budget], transactions, mk)
+        payroll_w = next((w for w in acc_wallets if w.user_id == current_user.id and w.is_default), None)
+        return {
+            "mode": "TRANSFER_ALLOCATION",
+            "transaction_id": tx.id,
+            "source_wallet_balance": round(source_wallet.balance, 2),
+            "dest_wallet_balance": round(dest_wallet.balance, 2),
+            "item": serialize_budget_item(budget, spent_map.get(budget.id, 0.0), payroll_w.id if payroll_w else None),
         }
 
     # EXPENSE mode
     target_wallet_id = req.wallet_id or budget.wallet_id
     target_wallet = None
     if target_wallet_id:
-        target_wallet = db.query(Wallet).filter(
-            Wallet.id == target_wallet_id,
-            Wallet.user_id == current_user.id,
-            Wallet.is_archived == False,
-        ).first()
+        target_res = get_accessible_wallet_by_id(db, current_user.id, target_wallet_id, min_role="EDITOR")
+        if target_res:
+            target_wallet, _ = target_res
     if not target_wallet:
         target_wallet = (
             db.query(Wallet)
@@ -1136,14 +1247,21 @@ def record_budget_action(
     db.commit()
     db.refresh(budget)
 
-    transactions = db.query(Transaction).filter(Transaction.user_id == current_user.id).all()
+    acc_wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+    acc_wallet_ids = [w.id for w in acc_wallets]
+    transactions = (
+        db.query(Transaction)
+        .filter((Transaction.user_id == current_user.id) | (Transaction.wallet_id.in_(acc_wallet_ids)))
+        .all()
+    )
     mk = budget.month_key or get_current_month_key()
     spent_map = compute_budget_spent_map([budget], transactions, mk)
+    payroll_w = next((w for w in acc_wallets if w.user_id == current_user.id and w.is_default), None)
     return {
         "mode": "EXPENSE",
         "transaction_id": tx.id,
         "wallet_balance": round(target_wallet.balance, 2),
-        "item": serialize_budget_item(budget, spent_map.get(budget.id, 0.0)),
+        "item": serialize_budget_item(budget, spent_map.get(budget.id, 0.0), payroll_w.id if payroll_w else None),
     }
 
 
@@ -1163,9 +1281,18 @@ def list_budgets(
         .order_by(Budget.sort_order.asc(), Budget.created_at.asc())
         .all()
     )
-    transactions = db.query(Transaction).filter(Transaction.user_id == current_user.id).all()
+    acc_wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+    acc_wallet_ids = [w.id for w in acc_wallets]
+    payroll_w = next((w for w in acc_wallets if w.user_id == current_user.id and w.is_default), None)
+    payroll_wallet_id = payroll_w.id if payroll_w else None
+
+    transactions = (
+        db.query(Transaction)
+        .filter((Transaction.user_id == current_user.id) | (Transaction.wallet_id.in_(acc_wallet_ids)))
+        .all()
+    )
     spent_map = compute_budget_spent_map(budgets, transactions, mk)
-    return [serialize_budget_item(b, spent_map.get(b.id, 0.0)) for b in budgets]
+    return [serialize_budget_item(b, spent_map.get(b.id, 0.0), payroll_wallet_id) for b in budgets]
 
 
 @router.post("")
@@ -1182,8 +1309,8 @@ def create_budget(
 
     wallet_id = req.wallet_id or None
     if wallet_id:
-        wallet = db.query(Wallet).filter(Wallet.id == wallet_id, Wallet.user_id == current_user.id).first()
-        if not wallet:
+        w_res = get_accessible_wallet_by_id(db, current_user.id, wallet_id, min_role="VIEWER")
+        if not w_res:
             raise HTTPException(status_code=404, detail="Dompet Fund Location tidak ditemukan")
 
     # Determine item name & category
@@ -1193,6 +1320,11 @@ def create_budget(
         if not cat:
             raise HTTPException(status_code=400, detail="Nama pos anggaran wajib diisi")
         raw_name = cat.name
+
+    acc_wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+    acc_wallet_ids = [w.id for w in acc_wallets]
+    payroll_w = next((w for w in acc_wallets if w.user_id == current_user.id and w.is_default), None)
+    payroll_wallet_id = payroll_w.id if payroll_w else None
 
     # Legacy behavior if caller only passed category_id without name: update existing row for that category in mk
     if not req.name and req.category_id:
@@ -1208,9 +1340,13 @@ def create_budget(
                 existing.wallet_id = wallet_id
             db.commit()
             db.refresh(existing)
-            transactions = db.query(Transaction).filter(Transaction.user_id == current_user.id).all()
+            transactions = (
+                db.query(Transaction)
+                .filter((Transaction.user_id == current_user.id) | (Transaction.wallet_id.in_(acc_wallet_ids)))
+                .all()
+            )
             spent_map = compute_budget_spent_map([existing], transactions, mk)
-            return serialize_budget_item(existing, spent_map.get(existing.id, 0.0))
+            return serialize_budget_item(existing, spent_map.get(existing.id, 0.0), payroll_wallet_id)
 
     sinking = req.is_sinking_fund if req.is_sinking_fund is not None else is_sinking_group(grp)
     if req.sort_order is not None:
@@ -1242,9 +1378,13 @@ def create_budget(
     db.commit()
     db.refresh(budget)
 
-    transactions = db.query(Transaction).filter(Transaction.user_id == current_user.id).all()
+    transactions = (
+        db.query(Transaction)
+        .filter((Transaction.user_id == current_user.id) | (Transaction.wallet_id.in_(acc_wallet_ids)))
+        .all()
+    )
     spent_map = compute_budget_spent_map([budget], transactions, mk)
-    return serialize_budget_item(budget, spent_map.get(budget.id, 0.0))
+    return serialize_budget_item(budget, spent_map.get(budget.id, 0.0), payroll_wallet_id)
 
 
 @router.put("/{budget_id}")
@@ -1276,8 +1416,8 @@ def update_budget(
     if "wallet_id" in payload:
         wid = payload["wallet_id"] or None
         if wid:
-            w = db.query(Wallet).filter(Wallet.id == wid, Wallet.user_id == current_user.id).first()
-            if not w:
+            w_res = get_accessible_wallet_by_id(db, current_user.id, wid, min_role="VIEWER")
+            if not w_res:
                 raise HTTPException(status_code=404, detail="Dompet Fund Location tidak ditemukan")
         budget.wallet_id = wid
     if "category_id" in payload:
@@ -1302,10 +1442,19 @@ def update_budget(
     db.commit()
     db.refresh(budget)
 
+    acc_wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+    acc_wallet_ids = [w.id for w in acc_wallets]
+    payroll_w = next((w for w in acc_wallets if w.user_id == current_user.id and w.is_default), None)
+    payroll_wallet_id = payroll_w.id if payroll_w else None
+
     mk = budget.month_key or get_current_month_key()
-    transactions = db.query(Transaction).filter(Transaction.user_id == current_user.id).all()
+    transactions = (
+        db.query(Transaction)
+        .filter((Transaction.user_id == current_user.id) | (Transaction.wallet_id.in_(acc_wallet_ids)))
+        .all()
+    )
     spent_map = compute_budget_spent_map([budget], transactions, mk)
-    return serialize_budget_item(budget, spent_map.get(budget.id, 0.0))
+    return serialize_budget_item(budget, spent_map.get(budget.id, 0.0), payroll_wallet_id)
 
 
 @router.delete("/{budget_id}")

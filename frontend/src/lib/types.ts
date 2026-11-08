@@ -1,3 +1,11 @@
+export interface WalletMember {
+  user_id: string;
+  name: string;
+  email: string;
+  role: "EDITOR" | "VIEWER";
+  created_at?: string;
+}
+
 export interface Wallet {
   id: string;
   name: string;
@@ -6,6 +14,10 @@ export interface Wallet {
   currency: string;
   color: string;
   is_default: boolean;
+  is_shared?: boolean;
+  access_role?: "OWNER" | "EDITOR" | "VIEWER";
+  owner?: { id: string; name: string; email: string } | null;
+  members?: WalletMember[];
   created_at: string;
   allocated_budget?: number;
   remaining_commitment?: number;
@@ -34,6 +46,9 @@ export interface Transaction {
   description: string;
   merchant?: string | null;
   wallet?: { id: string; name: string; color: string } | null;
+  to_wallet?: { id: string; name: string; color: string } | null;
+  created_by?: { id: string; name: string; email: string } | null;
+  is_own?: boolean;
   category?: { id: string; name: string; icon: string; color: string } | null;
   budget?: { id: string; name: string; group_type: string } | null;
   raw_source: string;
@@ -58,6 +73,9 @@ export interface Budget {
   accumulated_balance: number;
   sort_order: number;
   wallet_id: string | null;
+  is_same_as_payroll?: boolean;
+  funding_status?: "PAYROLL_DIRECT" | "FUNDED" | "PARTIAL" | "UNFUNDED";
+  unfunded_amount?: number;
   wallet: {
     id: string;
     name: string;
@@ -115,6 +133,8 @@ export interface MonthlyAllocationResponse {
   has_previous_month_template: boolean;
   reference_income: number;
   income_source: "PROFILE" | "TRANSACTIONS" | "UNSET";
+  payroll_wallet_id?: string | null;
+  payroll_wallet_name?: string | null;
   group_presets: string[];
   groups: BudgetGroupSummary[];
   wallet_allocations: WalletAllocationSummary[];

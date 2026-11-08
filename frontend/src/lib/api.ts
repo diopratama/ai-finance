@@ -218,13 +218,22 @@ export async function getAdminUsers(params?: {
 }
 
 // ----------------- WALLETS -----------------
-export async function getWallets(month?: string): Promise<{ total_balance: number; currency: string; month_key?: string; wallets: Wallet[] }> {
+export async function getWallets(month?: string): Promise<{
+  total_balance: number;
+  personal_balance?: number;
+  shared_balance?: number;
+  currency: string;
+  month_key?: string;
+  wallets: Wallet[];
+}> {
   try {
     const q = month ? `?month=${encodeURIComponent(month)}` : "";
     return await apiFetch(`/wallets${q}`);
   } catch {
     return {
       total_balance: 16250000,
+      personal_balance: 16250000,
+      shared_balance: 0,
       currency: "IDR",
       wallets: [
         { id: "1", name: "Bank BCA", type: "BANK", balance: 15000000, currency: "IDR", color: "#f0b000", is_default: false, created_at: new Date().toISOString() },
@@ -252,6 +261,25 @@ export async function transferFunds(data: { from_wallet_id: string; to_wallet_id
 
 export async function deleteWallet(walletId: string) {
   return apiFetch(`/wallets/${walletId}`, { method: "DELETE" });
+}
+
+export async function addWalletMember(
+  walletId: string,
+  data: { email: string; role?: "EDITOR" | "VIEWER" }
+): Promise<{ message: string; member: { user_id: string; name: string; email: string; role: string } }> {
+  return apiFetch(`/wallets/${walletId}/members`, { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateWalletMemberRole(
+  walletId: string,
+  memberUserId: string,
+  role: "EDITOR" | "VIEWER"
+): Promise<{ message: string; role: string }> {
+  return apiFetch(`/wallets/${walletId}/members/${memberUserId}`, { method: "PUT", body: JSON.stringify({ role }) });
+}
+
+export async function removeWalletMember(walletId: string, memberUserId: string): Promise<{ message: string }> {
+  return apiFetch(`/wallets/${walletId}/members/${memberUserId}`, { method: "DELETE" });
 }
 
 // ----------------- TRANSACTIONS -----------------
@@ -464,13 +492,21 @@ export async function distributePaydayToWallets(data: {
 export async function recordBudgetAction(
   budgetId: string,
   data: {
-    mode: "EXPENSE" | "FUND_SINKING";
+    mode: "EXPENSE" | "FUND_SINKING" | "TRANSFER_ALLOCATION";
     amount?: number;
     wallet_id?: string;
+    source_wallet_id?: string;
     description?: string;
   }
 ) {
-  return apiFetch<{ mode: string; item: Budget; transaction_id?: string; wallet_balance?: number }>(
+  return apiFetch<{
+    mode: string;
+    item: Budget;
+    transaction_id?: string;
+    wallet_balance?: number;
+    source_wallet_balance?: number;
+    dest_wallet_balance?: number;
+  }>(
     `/budgets/${budgetId}/record`,
     { method: "POST", body: JSON.stringify(data) }
   );

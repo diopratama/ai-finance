@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Generator, List, Optional
+from typing import Generator, List, Optional, Tuple
 
 from sqlalchemy import (
     Boolean,
@@ -78,6 +78,22 @@ class Wallet(Base):
 
     user = relationship("User", back_populates="wallets")
     transactions = relationship("Transaction", back_populates="wallet", foreign_keys="Transaction.wallet_id")
+    members = relationship("WalletMember", back_populates="wallet", cascade="all, delete-orphan")
+
+
+class WalletMember(Base):
+    __tablename__ = "wallet_members"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    wallet_id = Column(String(36), ForeignKey("wallets.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(16), default="EDITOR", nullable=False)  # "EDITOR" | "VIEWER"
+    invited_by_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=_utc_now, nullable=False)
+
+    wallet = relationship("Wallet", back_populates="members")
+    user = relationship("User", foreign_keys=[user_id])
+    invited_by = relationship("User", foreign_keys=[invited_by_id])
 
 
 class Category(Base):
@@ -352,6 +368,71 @@ DEFAULT_BUDGET_GROUPS = [
     {"name": "ZAKAT DAN SEDEKAH", "is_sinking_fund": False, "sort_order": 3},
     {"name": "PREDICTABLE SAVING", "is_sinking_fund": True, "sort_order": 4},
 ]
+
+
+def get_wallet_role(db: Session, wallet: Wallet, user_id: str) -> Optional[str]:
+    """Returns 'OWNER', 'EDITOR', 'VIEWER', or None."""
+    if not wallet:
+        return None
+    if wallet.user_id == user_id:
+        return "OWNER"
+    member = db.query(WalletMember).filter(
+        WalletMember.wallet_id == wallet.id,
+        WalletMember.user_id == user_id
+    ).first()
+    if member:
+        return member.role.upper()
+    return None
+
+
+def get_accessible_wallets(db: Session, user_id: str, min_role: str = "VIEWER") -> List[Wallet]:
+    """Returns all non-archived wallets owned by user or shared with user at or above min_role."""
+    role_weights = {"VIEWER": 1, "EDITOR": 2, "OWNER": 3}
+    min_weight = role_weights.get(min_role.upper(), 1)
+
+    owned_wallets = (
+        db.query(Wallet)
+        .filter(Wallet.user_id == user_id, Wallet.is_archived == False)
+        .order_by(Wallet.is_default.desc(), Wallet.created_at.asc())
+        .all()
+    )
+    if min_weight > 2:
+        return owned_wallets
+
+    # Query shared wallets
+    shared_members = (
+        db.query(WalletMember)
+        .join(Wallet, Wallet.id == WalletMember.wallet_id)
+        .filter(
+            WalletMember.user_id == user_id,
+            Wallet.is_archived == False
+        )
+        .all()
+    )
+
+    shared_wallets = []
+    seen_ids = {w.id for w in owned_wallets}
+    for sm in shared_members:
+        if role_weights.get(sm.role.upper(), 1) >= min_weight and sm.wallet and sm.wallet.id not in seen_ids:
+            shared_wallets.append(sm.wallet)
+            seen_ids.add(sm.wallet.id)
+
+    return owned_wallets + shared_wallets
+
+
+def get_accessible_wallet_by_id(db: Session, user_id: str, wallet_id: str, min_role: str = "VIEWER") -> Optional[Tuple[Wallet, str]]:
+    """Returns (Wallet, role) where role is OWNER, EDITOR, or VIEWER if user has access >= min_role."""
+    wallet = db.query(Wallet).filter(Wallet.id == wallet_id, Wallet.is_archived == False).first()
+    if not wallet:
+        return None
+    role = get_wallet_role(db, wallet, user_id)
+    if not role:
+        return None
+
+    role_weights = {"VIEWER": 1, "EDITOR": 2, "OWNER": 3}
+    if role_weights.get(role, 0) >= role_weights.get(min_role.upper(), 1):
+        return (wallet, role)
+    return None
 
 
 def ensure_user_default_groups(db: Session, user_id: str) -> List[BudgetGroup]:

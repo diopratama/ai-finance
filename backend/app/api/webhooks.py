@@ -8,7 +8,17 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import BotLink, Budget, Category, Transaction, User, Wallet, get_db
+from app.db import (
+    BotLink,
+    Budget,
+    Category,
+    Transaction,
+    User,
+    Wallet,
+    get_db,
+    get_accessible_wallets,
+    get_wallet_role,
+)
 from app.api.budgets import compute_budget_spent_map, get_current_month_key
 from app.services.nlu_parser import match_budget_item_from_text, parse_transaction_text
 from app.services.router_service import router_service
@@ -32,7 +42,7 @@ def _process_user_transaction_message(
     db: Session,
 ) -> Dict[str, Any]:
     """Helper to parse and save a transaction for a verified user, with smart Budget & Fund Location routing."""
-    wallets = db.query(Wallet).filter(Wallet.user_id == user.id, Wallet.is_archived == False).all()
+    wallets = get_accessible_wallets(db, user.id, min_role="EDITOR")
     wallet_names = [w.name for w in wallets]
     user_custom_cats = [
         c.name
@@ -56,7 +66,8 @@ def _process_user_transaction_message(
                 "⚠️ Nominal transaksi tidak terdeteksi.\n\n"
                 "Contoh format yang bisa Anda kirimkan:\n"
                 "• 'kopi susu 25rb bayar gopay'\n"
-                "• 'makan siang 35.000 di warteg'\n"
+                "• 'topup gopay 100rb dari bca'\n"
+                "• 'transfer 500rb dari mandiri ke jago'\n"
                 "• 'isi bensin 100rb'\n"
                 "• 'gaji bulanan 12jt'"
             ),
@@ -64,6 +75,94 @@ def _process_user_transaction_message(
         }
 
     tx_type = parsed["type"]
+
+    # Handle TRANSFER transaction
+    if tx_type == "TRANSFER":
+        source_wallet = None
+        target_wallet = None
+
+        # Resolve source wallet
+        src_hint = parsed.get("source_wallet_hint")
+        if src_hint:
+            for w in wallets:
+                if src_hint.lower() in w.name.lower() or w.name.lower() in src_hint.lower():
+                    source_wallet = w
+                    break
+
+        # Resolve target wallet
+        target_hint = parsed.get("target_wallet_hint") or parsed.get("wallet_hint")
+        if target_hint:
+            for w in wallets:
+                if target_hint.lower() in w.name.lower() or w.name.lower() in target_hint.lower():
+                    target_wallet = w
+                    break
+
+        if not target_wallet:
+            return {
+                "success": False,
+                "message": f"⚠️ Dompet tujuan{f' ({target_hint})' if target_hint else ''} tidak ditemukan di akun Anda. Pastikan nama dompet sesuai.",
+            }
+
+        if not source_wallet:
+            # Fallback: choose default wallet or first wallet different from target
+            default_w = next((w for w in wallets if w.is_default and w.id != target_wallet.id), None)
+            source_wallet = default_w or next((w for w in wallets if w.id != target_wallet.id), None)
+
+        if not source_wallet:
+            return {
+                "success": False,
+                "message": f"⚠️ Dompet sumber{f' ({src_hint})' if src_hint else ''} tidak ditemukan di akun Anda.",
+            }
+
+        if source_wallet.id == target_wallet.id:
+            return {
+                "success": False,
+                "message": "⚠️ Dompet sumber dan dompet tujuan transfer sama.",
+            }
+
+        source_wallet.balance -= amount
+        target_wallet.balance += amount
+
+        tx = Transaction(
+            user_id=user.id,
+            wallet_id=source_wallet.id,
+            to_wallet_id=target_wallet.id,
+            type="TRANSFER",
+            amount=amount,
+            currency=source_wallet.currency,
+            amount_in_base=amount,
+            description=parsed["description"] or f"Transfer dari {source_wallet.name} ke {target_wallet.name}",
+            merchant=receipt_meta.get("merchant") if receipt_meta else None,
+            raw_source=source,
+            raw_input=raw_text,
+            receipt_metadata=json.dumps(receipt_meta) if receipt_meta else None,
+            transaction_date=datetime.now(timezone.utc),
+        )
+        db.add(tx)
+        db.commit()
+        db.refresh(tx)
+
+        formatted_amount = f"Rp {int(amount):,}".replace(",", ".")
+        src_bal_fmt = f"Rp {int(round(source_wallet.balance)):,}".replace(",", ".")
+        dest_bal_fmt = f"Rp {int(round(target_wallet.balance)):,}".replace(",", ".")
+
+        reply_msg = (
+            f"🔄 Transfer Berhasil Dicatat!\n"
+            f"• Nominal: {formatted_amount} ({source_wallet.currency})\n"
+            f"• Dari Dompet: {source_wallet.name} (Sisa Saldo: {src_bal_fmt})\n"
+            f"• Ke Dompet: {target_wallet.name} (Sisa Saldo: {dest_bal_fmt})\n"
+            f"• Deskripsi: {tx.description}"
+        )
+
+        return {
+            "success": True,
+            "message": reply_msg,
+            "transaction_id": tx.id,
+            "parsed": parsed,
+            "source_wallet": {"id": source_wallet.id, "name": source_wallet.name, "balance": source_wallet.balance},
+            "target_wallet": {"id": target_wallet.id, "name": target_wallet.name, "balance": target_wallet.balance},
+        }
+
     current_mk = get_current_month_key()
     matched_budget: Optional[Budget] = None
     if tx_type == "EXPENSE":
@@ -117,7 +216,7 @@ def _process_user_transaction_message(
     # Apply balance update
     if tx_type == "EXPENSE":
         target_wallet.balance -= amount
-    elif tx_type in ("INCOME", "TRANSFER", "TOPUP"):
+    elif tx_type in ("INCOME", "TOPUP"):
         target_wallet.balance += amount
 
     tx = Transaction(
@@ -178,6 +277,12 @@ def _process_user_transaction_message(
 
     return {
         "success": True,
+        "message": reply_msg,
+        "transaction_id": tx.id,
+        "parsed": parsed,
+        "matched_budget": matched_budget_payload,
+        "wallet": {"id": target_wallet.id, "name": target_wallet.name, "balance": target_wallet.balance},
+    }
         "message": reply_msg,
         "transaction_id": tx.id,
         "parsed": parsed,
@@ -310,12 +415,7 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
             k in text_lower for k in ("cek saldo", "saldo saya", "lihat saldo", "total saldo", "sisa saldo", "cek dompet")
         ):
             user = bot_link.user
-            wallets = (
-                db.query(Wallet)
-                .filter(Wallet.user_id == user.id, Wallet.is_archived == False)
-                .order_by(Wallet.is_default.desc(), Wallet.name.asc())
-                .all()
-            )
+            wallets = get_accessible_wallets(db, user.id, min_role="VIEWER")
             if not wallets:
                 return await _send_telegram_reply(
                     chat_id,
@@ -327,8 +427,13 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
             for w in wallets:
                 icon = "💵" if w.type == "CASH" else ("🏦" if w.type == "BANK" else ("📱" if w.type == "EWALLET" else "💳"))
                 fmt_bal = f"Rp {int(round(w.balance)):,}".replace(",", ".")
-                def_badge = " (Utama)" if w.is_default else ""
-                lines.append(f"• {icon} {w.name}{def_badge}: {fmt_bal}")
+                badges = []
+                if w.is_default:
+                    badges.append("Utama")
+                if w.user_id != user.id:
+                    badges.append("Bersama")
+                badge_str = f" ({', '.join(badges)})" if badges else ""
+                lines.append(f"• {icon} {w.name}{badge_str}: {fmt_bal}")
 
             fmt_total = f"Rp {int(round(total_balance)):,}".replace(",", ".")
             lines.append(f"\n💰 Total Saldo Tersedia: {fmt_total} ({user.base_currency or 'IDR'})")
@@ -354,9 +459,10 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
                 "• Catat Pengeluaran:\n"
                 "  - 'kopi susu 25rb bayar gopay'\n"
                 "  - 'beli belanja bulanan 450.000'\n\n"
-                "• Catat Pemasukan & Top Up:\n"
-                "  - 'topup saldo gopay 1jt'\n"
-                "  - 'gaji bulan ini 15jt masuk bca'\n\n"
+                "• Transfer & Top Up Saldo:\n"
+                "  - 'topup gopay 100rb dari bca'\n"
+                "  - 'transfer 500rb dari mandiri ke jago'\n"
+                "  - 'topup saldo gopay 1jt'\n\n"
                 "• Cek Saldo Dompet: Ketik /saldo atau 'cek saldo'\n"
                 "• Cek Ringkasan: Ketik /summary atau /laporan\n"
                 "• Bantuan: Ketik /help"

@@ -5,7 +5,17 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from app.db import Budget, Transaction, Wallet, Category, User, get_db
+from app.db import (
+    Budget,
+    Transaction,
+    Wallet,
+    Category,
+    User,
+    get_db,
+    get_accessible_wallets,
+    get_accessible_wallet_by_id,
+    get_wallet_role,
+)
 from app.auth import get_current_user
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
@@ -37,7 +47,12 @@ def list_transactions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Transaction).filter(Transaction.user_id == current_user.id)
+    acc_wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+    acc_wallet_ids = [w.id for w in acc_wallets]
+
+    query = db.query(Transaction).filter(
+        (Transaction.user_id == current_user.id) | (Transaction.wallet_id.in_(acc_wallet_ids))
+    )
 
     if wallet_id:
         query = query.filter(Transaction.wallet_id == wallet_id)
@@ -55,8 +70,15 @@ def list_transactions(
     total_count = query.count()
     transactions = query.order_by(desc(Transaction.transaction_date)).offset(offset).limit(limit).all()
 
+    wallet_map = {w.id: w for w in acc_wallets}
     items = []
     for tx in transactions:
+        to_wallet_info = None
+        if tx.to_wallet_id:
+            tw = wallet_map.get(tx.to_wallet_id) or db.query(Wallet).filter(Wallet.id == tx.to_wallet_id).first()
+            if tw:
+                to_wallet_info = {"id": tw.id, "name": tw.name, "color": tw.color}
+
         items.append({
             "id": tx.id,
             "type": tx.type,
@@ -66,6 +88,7 @@ def list_transactions(
             "description": tx.description,
             "merchant": tx.merchant,
             "wallet": {"id": tx.wallet.id, "name": tx.wallet.name, "color": tx.wallet.color} if tx.wallet else None,
+            "to_wallet": to_wallet_info,
             "category": {"id": tx.category.id, "name": tx.category.name, "icon": tx.category.icon, "color": tx.category.color} if tx.category else None,
             "budget": (
                 {
@@ -76,6 +99,12 @@ def list_transactions(
                 if tx.budget
                 else None
             ),
+            "created_by": {
+                "id": tx.user.id,
+                "name": tx.user.full_name or tx.user.email,
+                "email": tx.user.email,
+            } if tx.user else None,
+            "is_own": tx.user_id == current_user.id,
             "raw_source": tx.raw_source,
             "transaction_date": tx.transaction_date.isoformat(),
         })
@@ -106,7 +135,11 @@ def create_transaction(
     resolved_wallet_id = req.wallet_id or (linked_budget.wallet_id if linked_budget else None)
     wallet = None
     if resolved_wallet_id:
-        wallet = db.query(Wallet).filter(Wallet.id == resolved_wallet_id, Wallet.user_id == current_user.id).first()
+        w_res = get_accessible_wallet_by_id(db, current_user.id, resolved_wallet_id, min_role="EDITOR")
+        if not w_res:
+            raise HTTPException(status_code=403, detail="Anda tidak memiliki izin Editor untuk mencatat transaksi di dompet ini")
+        wallet, _ = w_res
+
     if not wallet:
         wallet = (
             db.query(Wallet)
@@ -115,7 +148,7 @@ def create_transaction(
             .first()
         )
     if not wallet:
-        raise HTTPException(status_code=404, detail="Wallet not found")
+        raise HTTPException(status_code=404, detail="Dompet tidak ditemukan")
 
     tx_type = req.type.upper()
     if tx_type == "EXPENSE":
@@ -158,9 +191,15 @@ def create_transaction(
 
 @router.delete("/{tx_id}")
 def delete_transaction(tx_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    tx = db.query(Transaction).filter(Transaction.id == tx_id, Transaction.user_id == current_user.id).first()
+    tx = db.query(Transaction).filter(Transaction.id == tx_id).first()
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
+
+    is_creator = tx.user_id == current_user.id
+    is_wallet_owner = tx.wallet and tx.wallet.user_id == current_user.id
+
+    if not is_creator and not is_wallet_owner:
+        raise HTTPException(status_code=403, detail="Anda tidak memiliki izin untuk menghapus transaksi ini")
 
     if tx.wallet:
         if tx.type == "EXPENSE":
@@ -170,7 +209,7 @@ def delete_transaction(tx_id: str, current_user: User = Depends(get_current_user
         elif tx.type == "TRANSFER":
             tx.wallet.balance += tx.amount
             if tx.to_wallet_id:
-                dest_w = db.query(Wallet).filter(Wallet.id == tx.to_wallet_id, Wallet.user_id == current_user.id).first()
+                dest_w = db.query(Wallet).filter(Wallet.id == tx.to_wallet_id).first()
                 if dest_w:
                     dest_w.balance -= tx.amount
 
@@ -182,7 +221,14 @@ def delete_transaction(tx_id: str, current_user: User = Depends(get_current_user
 @router.get("/summary")
 def get_transaction_summary(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Computes total income, total expense, net savings, and category distribution."""
-    transactions = db.query(Transaction).filter(Transaction.user_id == current_user.id).all()
+    acc_wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+    acc_wallet_ids = [w.id for w in acc_wallets]
+
+    transactions = (
+        db.query(Transaction)
+        .filter((Transaction.user_id == current_user.id) | (Transaction.wallet_id.in_(acc_wallet_ids)))
+        .all()
+    )
 
     total_income = sum(t.amount_in_base for t in transactions if t.type == "INCOME")
     total_expense = sum(t.amount_in_base for t in transactions if t.type == "EXPENSE")
@@ -198,9 +244,8 @@ def get_transaction_summary(current_user: User = Depends(get_current_user), db: 
             cat_map[cat_name]["total"] += t.amount_in_base
 
     return {
-        "currency": current_user.base_currency,
         "total_income": round(total_income, 2),
         "total_expense": round(total_expense, 2),
         "net_savings": round(net_savings, 2),
-        "category_breakdown": list(cat_map.values()),
+        "categories": list(cat_map.values()),
     }

@@ -274,6 +274,8 @@ export default function TransactionsPage() {
                         >
                           {tx.type === "EXPENSE" ? (
                             <ArrowDownLeft className="w-4 h-4" />
+                          ) : tx.type === "TRANSFER" ? (
+                            <ArrowLeftRight className="w-4 h-4" />
                           ) : (
                             <ArrowUpRight className="w-4 h-4" />
                           )}
@@ -281,9 +283,16 @@ export default function TransactionsPage() {
                         <div>
                           <div className="font-semibold text-foreground">{tx.description}</div>
                           {tx.merchant && <div className="text-[11px] text-muted-foreground">Toko: {tx.merchant}</div>}
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-secondary text-muted-foreground border border-border">
-                            {tx.raw_source}
-                          </span>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-secondary text-muted-foreground border border-border">
+                              {tx.raw_source}
+                            </span>
+                            {tx.created_by && !tx.is_own && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 font-medium">
+                                Dicatat: {tx.created_by.name}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -296,7 +305,7 @@ export default function TransactionsPage() {
                           </div>
                         ) : (
                           <span className="px-2.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border text-[11px]">
-                            {tx.category?.name || "Lain-lain"}
+                            {tx.category?.name || (tx.type === "TRANSFER" ? "Transfer Saldo" : "Lain-lain")}
                           </span>
                         )}
                         {tx.budget && tx.category && (
@@ -305,12 +314,20 @@ export default function TransactionsPage() {
                       </div>
                     </td>
                     <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span
                           className="w-2.5 h-2.5 rounded-full"
                           style={{ backgroundColor: tx.wallet?.color || "#f0b000" }}
                         />
-                        <span className="font-medium text-foreground">{tx.wallet?.name || "Dompet"}</span>
+                        {tx.to_wallet ? (
+                          <span className="font-medium text-foreground text-xs flex items-center gap-1">
+                            <span>{tx.wallet?.name || "Asal"}</span>
+                            <span className="text-muted-foreground">&rarr;</span>
+                            <span className="text-primary font-bold">{tx.to_wallet.name}</span>
+                          </span>
+                        ) : (
+                          <span className="font-medium text-foreground text-xs">{tx.wallet?.name || "Dompet"}</span>
+                        )}
                       </div>
                     </td>
                     <td className="py-3.5 px-4 text-muted-foreground">{formatDate(tx.transaction_date)}</td>
