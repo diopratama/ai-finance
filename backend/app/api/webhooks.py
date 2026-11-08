@@ -201,11 +201,21 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
         body = await request.json()
         message = body.get("message", {})
         chat = message.get("chat", {})
-        chat_id = str(chat.get("id"))
+        chat_id = str(chat.get("id")) if chat.get("id") is not None else ""
         text = message.get("text", "").strip()
 
         if not chat_id:
             return {"ok": True}
+
+        def _telegram_response(reply_msg: str):
+            # Telegram Webhook synchronous reply via Bot API method
+            return {
+                "method": "sendMessage",
+                "chat_id": chat_id,
+                "text": reply_msg,
+                "ok": True,
+                "reply": reply_msg,
+            }
 
         # Check for pairing command: /pair 123456
         if text.startswith("/pair"):
@@ -223,8 +233,15 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
                     bot_link.platform_username = message.get("from", {}).get("username")
                     bot_link.pairing_code = None
                     db.commit()
-                    return {"ok": True, "reply": "✅ Akun Telegram Anda berhasil dihubungkan ke AI-Finance!"}
-            return {"ok": True, "reply": "❌ Kode pairing tidak valid atau telah kedaluwarsa."}
+                    return _telegram_response(
+                        "✅ Akun Telegram Anda berhasil dihubungkan ke AI-Finance!\n\n"
+                        "Anda sekarang bisa langsung mencatat transaksi, misal:\n"
+                        "• makan siang 35rb di warteg\n"
+                        "• isi bensin 250rb\n"
+                        "• gaji bulanan 10jt\n\n"
+                        "Ketik /summary atau /laporan untuk cek ringkasan saldo."
+                    )
+            return _telegram_response("❌ Kode pairing tidak valid atau telah kedaluwarsa. Silakan generate kode baru di web dashboard.")
 
         # Find linked user
         bot_link = db.query(BotLink).filter(
@@ -234,24 +251,41 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
         ).first()
 
         if not bot_link:
-            return {
-                "ok": True,
-                "reply": "Halo! Silakan hubungkan akun Telegram Anda terlebih dahulu melalui menu Integrasi Chatbot di web dashboard.",
-            }
+            return _telegram_response(
+                "Halo! Selamat datang di AI-Finance Bot 🤖\n\n"
+                "Akun Telegram Anda belum terhubung. Silakan lakukan pairing terlebih dahulu:\n"
+                "1. Buka dashboard: https://aifinance.fellow.my.id/bot-pairing\n"
+                "2. Klik 'Generate Code' pada kartu Telegram\n"
+                "3. Kirim pesan ke bot ini: /pair <kode>\n\n"
+                "Contoh: /pair 123456"
+            )
 
         # Check for /summary command
-        if text == "/summary" or text == "/laporan":
+        if text in ("/summary", "/laporan"):
             user = bot_link.user
             transactions = db.query(Transaction).filter(Transaction.user_id == user.id).all()
             total_exp = sum(t.amount_in_base for t in transactions if t.type == "EXPENSE")
             total_inc = sum(t.amount_in_base for t in transactions if t.type == "INCOME")
             summary_msg = (
-                f"📊 **Ringkasan Finansial Anda**\n"
+                f"📊 Ringkasan Finansial Anda\n"
                 f"• Total Pemasukan: Rp {int(total_inc):,}\n"
                 f"• Total Pengeluaran: Rp {int(total_exp):,}\n"
-                f"• Saldo Bersih: Rp {int(total_inc - total_exp):,}\n"
+                f"• Saldo Bersih: Rp {int(total_inc - total_exp):,}"
             ).replace(",", ".")
-            return {"ok": True, "reply": summary_msg}
+            return _telegram_response(summary_msg)
+
+        if text in ("/help", "/bantuan"):
+            help_msg = (
+                "💡 Panduan Penggunaan AI-Finance Bot:\n\n"
+                "• Catat Pengeluaran: Cukup ketik seperti chat biasa:\n"
+                "  - 'kopi susu 25rb bayar gopay'\n"
+                "  - 'beli belanja bulanan 450.000'\n"
+                "• Catat Pemasukan:\n"
+                "  - 'gaji bulan ini 15jt'\n"
+                "  - 'freelance project 2.5jt'\n"
+                "• Cek Ringkasan: Ketik /summary atau /laporan"
+            )
+            return _telegram_response(help_msg)
 
         # Process natural language expense
         result = _process_user_transaction_message(
@@ -261,7 +295,7 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
             receipt_meta=None,
             db=db,
         )
-        return {"ok": True, "reply": result["message"]}
+        return _telegram_response(result["message"])
 
     except Exception as e:
         logger.error("Telegram webhook error: %s", e)
