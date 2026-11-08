@@ -1,19 +1,20 @@
 from datetime import datetime, timezone
-from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy import desc
 
-from app.db import Transaction, Wallet, Category, User, get_db
+from app.db import Budget, Transaction, Wallet, Category, User, get_db
 from app.auth import get_current_user
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
 
 class CreateTransactionRequest(BaseModel):
-    wallet_id: str
+    wallet_id: Optional[str] = None
     category_id: Optional[str] = None
+    budget_id: Optional[str] = None
     type: str = "EXPENSE"  # EXPENSE, INCOME, TRANSFER
     amount: float
     currency: str = "IDR"
@@ -28,6 +29,7 @@ class CreateTransactionRequest(BaseModel):
 def list_transactions(
     wallet_id: Optional[str] = None,
     category_id: Optional[str] = None,
+    budget_id: Optional[str] = None,
     type: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
@@ -41,6 +43,8 @@ def list_transactions(
         query = query.filter(Transaction.wallet_id == wallet_id)
     if category_id:
         query = query.filter(Transaction.category_id == category_id)
+    if budget_id:
+        query = query.filter(Transaction.budget_id == budget_id)
     if type:
         query = query.filter(Transaction.type == type.upper())
     if search:
@@ -63,6 +67,15 @@ def list_transactions(
             "merchant": tx.merchant,
             "wallet": {"id": tx.wallet.id, "name": tx.wallet.name, "color": tx.wallet.color} if tx.wallet else None,
             "category": {"id": tx.category.id, "name": tx.category.name, "icon": tx.category.icon, "color": tx.category.color} if tx.category else None,
+            "budget": (
+                {
+                    "id": tx.budget.id,
+                    "name": tx.budget.name or (tx.budget.category.name if tx.budget.category else "Pos Anggaran"),
+                    "group_type": tx.budget.group_type,
+                }
+                if tx.budget
+                else None
+            ),
             "raw_source": tx.raw_source,
             "transaction_date": tx.transaction_date.isoformat(),
         })
@@ -81,24 +94,46 @@ def create_transaction(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    wallet = db.query(Wallet).filter(Wallet.id == req.wallet_id, Wallet.user_id == current_user.id).first()
+    linked_budget = None
+    if req.budget_id:
+        linked_budget = db.query(Budget).filter(
+            Budget.id == req.budget_id,
+            Budget.user_id == current_user.id,
+        ).first()
+        if not linked_budget:
+            raise HTTPException(status_code=404, detail="Pos anggaran tidak ditemukan")
+
+    resolved_wallet_id = req.wallet_id or (linked_budget.wallet_id if linked_budget else None)
+    wallet = None
+    if resolved_wallet_id:
+        wallet = db.query(Wallet).filter(Wallet.id == resolved_wallet_id, Wallet.user_id == current_user.id).first()
+    if not wallet:
+        wallet = (
+            db.query(Wallet)
+            .filter(Wallet.user_id == current_user.id, Wallet.is_archived == False)
+            .order_by(Wallet.is_default.desc(), Wallet.created_at.asc())
+            .first()
+        )
     if not wallet:
         raise HTTPException(status_code=404, detail="Wallet not found")
 
-    # Update wallet balance
-    if req.type.upper() == "EXPENSE":
+    tx_type = req.type.upper()
+    if tx_type == "EXPENSE":
         wallet.balance -= req.amount
-    elif req.type.upper() == "INCOME":
+    elif tx_type == "INCOME":
         wallet.balance += req.amount
+
+    resolved_category_id = req.category_id or (linked_budget.category_id if linked_budget else None)
 
     tx = Transaction(
         user_id=current_user.id,
         wallet_id=wallet.id,
-        category_id=req.category_id,
-        type=req.type.upper(),
+        category_id=resolved_category_id,
+        budget_id=linked_budget.id if linked_budget else None,
+        type=tx_type,
         amount=req.amount,
         currency=req.currency.upper(),
-        amount_in_base=req.amount,  # In multi-currency, simple 1:1 or fx multiplier
+        amount_in_base=req.amount,
         description=req.description,
         merchant=req.merchant,
         raw_source=req.raw_source,
@@ -108,7 +143,17 @@ def create_transaction(
     db.add(tx)
     db.commit()
     db.refresh(tx)
-    return tx
+    return {
+        "id": tx.id,
+        "type": tx.type,
+        "amount": tx.amount,
+        "currency": tx.currency,
+        "description": tx.description,
+        "wallet_id": tx.wallet_id,
+        "category_id": tx.category_id,
+        "budget_id": tx.budget_id,
+        "transaction_date": tx.transaction_date.isoformat(),
+    }
 
 
 @router.delete("/{tx_id}")
@@ -117,12 +162,17 @@ def delete_transaction(tx_id: str, current_user: User = Depends(get_current_user
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
-    # Revert wallet balance
     if tx.wallet:
         if tx.type == "EXPENSE":
             tx.wallet.balance += tx.amount
         elif tx.type == "INCOME":
             tx.wallet.balance -= tx.amount
+        elif tx.type == "TRANSFER":
+            tx.wallet.balance += tx.amount
+            if tx.to_wallet_id:
+                dest_w = db.query(Wallet).filter(Wallet.id == tx.to_wallet_id, Wallet.user_id == current_user.id).first()
+                if dest_w:
+                    dest_w.balance -= tx.amount
 
     db.delete(tx)
     db.commit()
@@ -138,7 +188,6 @@ def get_transaction_summary(current_user: User = Depends(get_current_user), db: 
     total_expense = sum(t.amount_in_base for t in transactions if t.type == "EXPENSE")
     net_savings = total_income - total_expense
 
-    # Category distribution
     cat_map = {}
     for t in transactions:
         if t.type == "EXPENSE":
@@ -155,4 +204,3 @@ def get_transaction_summary(current_user: User = Depends(get_current_user), db: 
         "net_savings": round(net_savings, 2),
         "category_breakdown": list(cat_map.values()),
     }
-

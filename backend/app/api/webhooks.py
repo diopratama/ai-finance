@@ -7,8 +7,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import BotLink, Category, Transaction, User, Wallet, get_db
-from app.services.nlu_parser import parse_transaction_text
+from app.db import BotLink, Budget, Category, Transaction, User, Wallet, get_db
+from app.api.budgets import compute_budget_spent_map, get_current_month_key
+from app.services.nlu_parser import match_budget_item_from_text, parse_transaction_text
 from app.services.router_service import router_service
 from app.auth import get_optional_user
 
@@ -29,14 +30,20 @@ def _process_user_transaction_message(
     receipt_meta: Optional[Dict[str, Any]],
     db: Session,
 ) -> Dict[str, Any]:
-    """Helper to parse and save a transaction for a verified user."""
-    # Fetch user wallet names for entity hints
+    """Helper to parse and save a transaction for a verified user, with smart Budget & Fund Location routing."""
     wallets = db.query(Wallet).filter(Wallet.user_id == user.id, Wallet.is_archived == False).all()
     wallet_names = [w.name for w in wallets]
+    user_custom_cats = [
+        c.name
+        for c in db.query(Category).filter(Category.user_id == user.id, Category.is_system == False).all()
+    ]
 
-    parsed = parse_transaction_text(raw_text, user_wallets=wallet_names)
+    parsed = parse_transaction_text(
+        raw_text,
+        user_wallets=wallet_names,
+        custom_categories=user_custom_cats,
+    )
 
-    # Determine amount (if receipt provided, use receipt total)
     amount = parsed["amount"]
     if receipt_meta and "total_amount" in receipt_meta:
         amount = receipt_meta["total_amount"]
@@ -44,20 +51,36 @@ def _process_user_transaction_message(
     if amount <= 0:
         return {
             "success": False,
-            "message": "Nominal tidak terdeteksi. Silakan sebutkan nominal (contoh: 'kopi 25rb pake gopay' atau 'gaji 10jt')",
+            "message": "Nominal tidak terdeteksi. Silakan sebutkan nominal (contoh: 'kopi 25rb pake gopay' atau 'isi bensin 250rb')",
             "parsed": parsed,
         }
 
-    # Match target wallet
+    tx_type = parsed["type"]
+    current_mk = get_current_month_key()
+    matched_budget: Optional[Budget] = None
+    if tx_type == "EXPENSE":
+        active_budgets = (
+            db.query(Budget)
+            .filter(Budget.user_id == user.id, Budget.month_key == current_mk)
+            .all()
+        )
+        matched_budget = match_budget_item_from_text(raw_text, active_budgets)
+
+    # Match target wallet:
+    # 1. Explicit wallet mentioned in chat text
+    # 2. Matched budget's Fund Location wallet (if user didn't specify a wallet in chat)
+    # 3. Default or first active wallet
     target_wallet = None
     if parsed["wallet_hint"]:
         for w in wallets:
-            if parsed["wallet_hint"].lower() in w.name.lower():
+            if parsed["wallet_hint"].lower() in w.name.lower() or w.name.lower() in parsed["wallet_hint"].lower():
                 target_wallet = w
                 break
 
+    if not target_wallet and matched_budget and matched_budget.wallet_id:
+        target_wallet = next((w for w in wallets if w.id == matched_budget.wallet_id), None)
+
     if not target_wallet:
-        # Fallback to default or first wallet
         default_w = next((w for w in wallets if w.is_default), None)
         target_wallet = default_w or (wallets[0] if wallets else None)
 
@@ -67,13 +90,23 @@ def _process_user_transaction_message(
             "message": "Anda belum memiliki wallet aktif. Silakan buat wallet terlebih dahulu di dashboard web.",
         }
 
-    # Match Category
-    category = db.query(Category).filter(Category.name == parsed["category_name"]).first()
+    # Match Category (prefer custom/system match or matched_budget's category)
+    category = None
+    if matched_budget and matched_budget.category_id:
+        category = db.query(Category).filter(Category.id == matched_budget.category_id).first()
+    if not category:
+        category = (
+            db.query(Category)
+            .filter(
+                ((Category.is_system == True) | (Category.user_id == user.id)),
+                Category.name.ilike(parsed["category_name"]),
+            )
+            .first()
+        )
     if not category:
         category = db.query(Category).filter(Category.name == "Lain-lain").first()
 
     # Apply balance update
-    tx_type = parsed["type"]
     if tx_type == "EXPENSE":
         target_wallet.balance -= amount
     elif tx_type == "INCOME":
@@ -83,6 +116,7 @@ def _process_user_transaction_message(
         user_id=user.id,
         wallet_id=target_wallet.id,
         category_id=category.id if category else None,
+        budget_id=matched_budget.id if matched_budget else None,
         type=tx_type,
         amount=amount,
         currency=parsed["currency"],
@@ -98,13 +132,32 @@ def _process_user_transaction_message(
     db.commit()
     db.refresh(tx)
 
+    budget_line = ""
+    matched_budget_payload = None
+    if matched_budget:
+        all_tx = db.query(Transaction).filter(Transaction.user_id == user.id).all()
+        spent_map = compute_budget_spent_map([matched_budget], all_tx, current_mk)
+        spent_now = spent_map.get(matched_budget.id, 0.0)
+        rem_now = max(0.0, matched_budget.limit_amount - spent_now)
+        rem_fmt = f"Rp {int(round(rem_now)):,}".replace(",", ".")
+        b_label = matched_budget.name or "Pos Anggaran"
+        budget_line = f"• **Pos Anggaran:** {b_label} (Sisa bulan ini: {rem_fmt})\n"
+        matched_budget_payload = {
+            "id": matched_budget.id,
+            "name": b_label,
+            "group_type": matched_budget.group_type,
+            "remaining_amount": round(rem_now, 2),
+        }
+
     action_symbol = "💸" if tx_type == "EXPENSE" else "💰"
     formatted_amount = f"Rp {int(amount):,}".replace(",", ".")
+    rem_wallet_fmt = f"Rp {int(round(target_wallet.balance)):,}".replace(",", ".")
     reply_msg = (
         f"{action_symbol} **{tx_type.title()} Berhasil Dicatat!**\n"
         f"• **Nominal:** {formatted_amount} ({parsed['currency']})\n"
         f"• **Kategori:** {category.name if category else 'Lain-lain'}\n"
-        f"• **Dompet:** {target_wallet.name} (Sisa Saldo: Rp {int(target_wallet.balance):,}".replace(",", ".") + ")\n"
+        f"{budget_line}"
+        f"• **Dompet:** {target_wallet.name} (Sisa Saldo: {rem_wallet_fmt})\n"
         f"• **Deskripsi:** {parsed['description']}"
     )
 
@@ -113,6 +166,7 @@ def _process_user_transaction_message(
         "message": reply_msg,
         "transaction_id": tx.id,
         "parsed": parsed,
+        "matched_budget": matched_budget_payload,
         "wallet": {"id": target_wallet.id, "name": target_wallet.name, "balance": target_wallet.balance},
     }
 

@@ -7,6 +7,7 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
+from app.api.budgets import compute_monthly_allocation_data, get_current_month_key
 from app.db import (
     Budget,
     CFPChatMessage,
@@ -87,6 +88,16 @@ def _serialize_personal_profile(profile: FinancialProfile, completeness: Dict[st
     }
 
 
+def _is_credit_wallet_type(w_type: str) -> bool:
+    t = (w_type or "").upper()
+    return any(k in t for k in ("CREDIT", "KREDIT", "PAYLATER", "LOAN", "UTANG", "HUTANG", "PINJAMAN", "CC"))
+
+
+def _is_illiquid_investment_type(w_type: str) -> bool:
+    t = (w_type or "").upper()
+    return any(k in t for k in ("INVEST", "SAHAM", "RDN", "REKSADANA", "CRYPTO", "PROPERTI", "EMAS", "SUKUK", "SBN"))
+
+
 def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
     """Aggregates verified wallets, category spending, budgets, and personal profile into a rich planner snapshot."""
     profile = _ensure_profile(user, db)
@@ -94,8 +105,16 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
 
     wallets = db.query(Wallet).filter(Wallet.user_id == user.id, Wallet.is_archived == False).all()
     total_wallet_balance = sum(w.balance for w in wallets)
-    liquid_balance = sum(w.balance for w in wallets if w.type in ["CASH", "BANK", "EWALLET"])
-    credit_debt_balance = sum(abs(w.balance) for w in wallets if w.type == "CREDIT" and w.balance < 0)
+    liquid_balance = sum(
+        w.balance
+        for w in wallets
+        if w.balance > 0 and not _is_credit_wallet_type(w.type) and not _is_illiquid_investment_type(w.type)
+    )
+    credit_debt_balance = sum(
+        abs(w.balance)
+        for w in wallets
+        if _is_credit_wallet_type(w.type) and w.balance < 0
+    )
 
     transactions = db.query(Transaction).filter(Transaction.user_id == user.id).all()
     tx_income = sum(t.amount_in_base for t in transactions if t.type == "INCOME")
@@ -116,19 +135,28 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
         else "  • Belum ada transaksi pengeluaran tercatat"
     )
 
-    # Budget utilization alerts
-    budgets = db.query(Budget).filter(Budget.user_id == user.id).all()
+    # Monthly Wallet-Linked Budget Allocation & alerts
+    alloc = compute_monthly_allocation_data(user, db, get_current_month_key())
     budget_lines: List[str] = []
-    for b in budgets:
-        cat_name = categories_map.get(b.category_id, "Kategori")
-        spent = sum(
-            t.amount_in_base
-            for t in transactions
-            if t.type == "EXPENSE" and t.category_id == b.category_id
-        )
-        pct = round((spent / b.limit_amount) * 100, 1) if b.limit_amount > 0 else 0.0
-        flag = "OVER-BUDGET!" if pct > 100 else ("HAMPIR PENUH" if pct >= 80 else "Aman")
-        budget_lines.append(f"  • {cat_name}: terpakai {_fmt_idr(spent)} dari {_fmt_idr(b.limit_amount)} ({pct}% — {flag})")
+    for grp in alloc["groups"]:
+        if grp["items_count"] > 0:
+            pct_str = f" ({grp['income_percentage']}% gaji)" if alloc["reference_income"] > 0 else ""
+            budget_lines.append(
+                f"  • Grup {grp['group_type']}: alokasi {_fmt_idr(grp['subtotal_budget'])}{pct_str}, "
+                f"realisasi {_fmt_idr(grp['subtotal_spent'])}"
+            )
+            for it in grp["items"]:
+                if it["is_over_budget"] or it["percent_used"] >= 80:
+                    flag = "OVER-BUDGET!" if it["is_over_budget"] else "HAMPIR PENUH"
+                    w_lbl = f" [{it['wallet']['name']}]" if it["wallet"] else ""
+                    budget_lines.append(
+                        f"    - {it['name']}{w_lbl}: {_fmt_idr(it['spent_amount'])} / {_fmt_idr(it['limit_amount'])} ({it['percent_used']}% — {flag})"
+                    )
+    for wa in alloc["wallet_allocations"]:
+        if wa["status"] == "SHORTFALL":
+            budget_lines.append(
+                f"  • Kekurangan Saldo Dompet {wa['wallet_name']}: kurang {_fmt_idr(wa['shortfall_amount'])} dari komitmen {_fmt_idr(wa['remaining_commitment'])}"
+            )
     budget_alerts_text = "\n".join(budget_lines) if budget_lines else "  • Belum ada batas anggaran bulanan yang diatur"
 
     wallets_breakdown_text = (

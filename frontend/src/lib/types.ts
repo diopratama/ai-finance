@@ -1,12 +1,19 @@
 export interface Wallet {
   id: string;
   name: string;
-  type: "CASH" | "BANK" | "EWALLET" | "INVESTMENT" | "CREDIT";
+  type: string; // Custom or preset e.g. BANK, EWALLET, CASH, KANTONG DIGITAL, BANK SYARIAH, INVESTMENT, CREDIT
   balance: number;
   currency: string;
   color: string;
   is_default: boolean;
   created_at: string;
+  allocated_budget?: number;
+  remaining_commitment?: number;
+  sinking_fund_held?: number;
+  free_balance?: number;
+  shortfall_amount?: number;
+  funding_status?: "FUNDED" | "SHORTFALL" | "IDLE";
+  assigned_items_count?: number;
 }
 
 export interface Category {
@@ -28,24 +35,98 @@ export interface Transaction {
   merchant?: string | null;
   wallet?: { id: string; name: string; color: string } | null;
   category?: { id: string; name: string; icon: string; color: string } | null;
+  budget?: { id: string; name: string; group_type: string } | null;
   raw_source: string;
   transaction_date: string;
 }
 
 export interface Budget {
   id: string;
-  category: {
-    id: string;
-    name: string;
-    icon: string;
-    color: string;
-  } | null;
+  name: string;
+  group_type: string;
+  remark: string;
   limit_amount: number;
   spent_amount: number;
   remaining_amount: number;
   percent_used: number;
   is_over_budget: boolean;
   period: string;
+  month_key: string;
+  is_sinking_fund: boolean;
+  rollover_balance: number;
+  funded_this_month: number;
+  accumulated_balance: number;
+  sort_order: number;
+  wallet_id: string | null;
+  wallet: {
+    id: string;
+    name: string;
+    type: string;
+    color: string;
+    balance: number;
+  } | null;
+  category_id: string | null;
+  category: {
+    id: string;
+    name: string;
+    icon: string;
+    color: string;
+  } | null;
+}
+
+export interface BudgetGroupItem {
+  id: string;
+  name: string;
+  is_sinking_fund: boolean;
+  sort_order: number;
+  items_count?: number;
+}
+
+export interface BudgetGroupSummary {
+  group_type: string;
+  is_sinking_fund_group: boolean;
+  subtotal_budget: number;
+  subtotal_spent: number;
+  subtotal_accumulated: number;
+  income_percentage: number;
+  items_count: number;
+  items: Budget[];
+}
+
+export interface WalletAllocationSummary {
+  wallet_id: string;
+  wallet_name: string;
+  wallet_type: string;
+  wallet_color: string;
+  current_balance: number;
+  total_monthly_budget: number;
+  sinking_rollover_balance: number;
+  sinking_fund_held: number;
+  remaining_commitment: number;
+  free_unallocated_balance: number;
+  shortfall_amount: number;
+  status: "FUNDED" | "SHORTFALL" | "IDLE";
+  items_count: number;
+}
+
+export interface MonthlyAllocationResponse {
+  month_key: string;
+  previous_month_key: string;
+  has_previous_month_template: boolean;
+  reference_income: number;
+  income_source: "PROFILE" | "TRANSACTIONS" | "UNSET";
+  group_presets: string[];
+  groups: BudgetGroupSummary[];
+  wallet_allocations: WalletAllocationSummary[];
+  unassigned_budget_total: number;
+  totals: {
+    total_budget: number;
+    total_spent: number;
+    total_remaining: number;
+    allocated_percentage: number;
+    unallocated_income: number;
+    items_count: number;
+  };
 }
 
 export interface TransactionSummary {

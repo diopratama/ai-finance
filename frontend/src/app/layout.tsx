@@ -1,11 +1,15 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ThemeProvider } from "@/components/ThemeProvider";
 import { AppShell } from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
-  title: "AI-Finance | Smart Wealth, Budgeting & AI Financial Planner",
-  description: "AI-powered Personal Finance app with automated WhatsApp/Telegram multimodal expense logging and holistic AI Financial Planner guidance.",
+  title: "AI-Finance | Smart Wealth, Payday Budgeting & AI Financial Planner",
+  description:
+    "Platform manajemen kekayaan, alokasi anggaran gajian terhubung dompet, chatbot pencatat WhatsApp/Telegram, dan AI Financial Planner adaptif.",
 };
+
+const themeInitScript = `(function(){try{var t=localStorage.getItem("theme");var d=t==="dark"||(!t&&window.matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d);}catch(e){document.documentElement.classList.add("dark");}})();`;
 
 export default function RootLayout({
   children,
@@ -13,9 +17,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="id" className="dark">
-      <body className="bg-slate-950 text-slate-100 min-h-screen">
-        <AppShell>{children}</AppShell>
+    <html lang="id" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body className="bg-background text-foreground min-h-screen antialiased">
+        <ThemeProvider>
+          <AppShell>{children}</AppShell>
+        </ThemeProvider>
       </body>
     </html>
   );

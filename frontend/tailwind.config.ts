@@ -10,26 +10,35 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "hsl(var(--background))",
-        foreground: "hsl(var(--foreground))",
-        card: "hsl(var(--card))",
-        "card-foreground": "hsl(var(--card-foreground))",
-        border: "hsl(var(--border))",
+        background: "rgb(var(--background-rgb) / <alpha-value>)",
+        foreground: "rgb(var(--foreground-rgb) / <alpha-value>)",
+        card: {
+          DEFAULT: "rgb(var(--card-rgb) / <alpha-value>)",
+          foreground: "rgb(var(--card-foreground-rgb) / <alpha-value>)",
+        },
+        sidebar: {
+          DEFAULT: "rgb(var(--sidebar-rgb) / <alpha-value>)",
+          foreground: "rgb(var(--sidebar-foreground-rgb) / <alpha-value>)",
+          border: "var(--sidebar-border)",
+        },
+        border: "var(--border)",
+        input: "var(--input)",
+        ring: "var(--ring)",
         primary: {
-          DEFAULT: "#10b981",
-          foreground: "#ffffff",
+          DEFAULT: "rgb(var(--primary-rgb) / <alpha-value>)",
+          foreground: "rgb(var(--primary-foreground-rgb) / <alpha-value>)",
         },
         secondary: {
-          DEFAULT: "#1e293b",
-          foreground: "#f8fafc",
+          DEFAULT: "rgb(var(--secondary-rgb) / <alpha-value>)",
+          foreground: "rgb(var(--secondary-foreground-rgb) / <alpha-value>)",
         },
         accent: {
-          DEFAULT: "#3b82f6",
-          foreground: "#ffffff",
+          DEFAULT: "var(--accent)",
+          foreground: "var(--accent-foreground)",
         },
         muted: {
-          DEFAULT: "#334155",
-          foreground: "#94a3b8",
+          DEFAULT: "rgb(var(--muted-rgb) / <alpha-value>)",
+          foreground: "rgb(var(--muted-foreground-rgb) / <alpha-value>)",
         },
       },
     },
@@ -37,4 +46,3 @@ const config: Config = {
   plugins: [],
 };
 export default config;
-

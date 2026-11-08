@@ -85,12 +85,64 @@ WALLET_KEYWORDS = {
     "ovo": ["ovo"],
     "dana": ["dana"],
     "shopeepay": ["shopeepay", "spay"],
+    "danamon": ["danamon"],
     "bibit": ["bibit"],
     "stockbit": ["stockbit"],
 }
 
+_BUDGET_STOPWORDS = {
+    "budget", "pos", "anggaran", "tabungan", "nabung", "uang", "dana",
+    "bayar", "beli", "isi", "untuk", "dan", "bulanan", "cash", "cicilan",
+}
 
-def parse_transaction_text(raw_text: str, user_wallets: Optional[List[str]] = None) -> Dict[str, Any]:
+
+def match_budget_item_from_text(raw_text: str, active_budgets: List[Any]) -> Optional[Any]:
+    """
+    Matches natural language expense text (e.g. 'isi bensin 250rb', 'bayar pdam 240k', 'les renang 500rb')
+    against the user's active monthly budget rows. Returns the highest-scoring Budget object or None.
+    """
+    if not active_budgets or not raw_text:
+        return None
+
+    clean_text = re.sub(r"[^a-z0-9\s]", " ", raw_text.lower())
+    msg_tokens = {tok for tok in clean_text.split() if len(tok) >= 3 and not tok.isdigit()}
+
+    best_budget = None
+    best_score = 0.0
+
+    for b in active_budgets:
+        raw_name = (getattr(b, "name", None) or "").strip()
+        if not raw_name:
+            continue
+        norm_name = re.sub(r"[^a-z0-9\s]", " ", raw_name.lower()).strip()
+        if not norm_name:
+            continue
+
+        score = 0.0
+        if len(norm_name) >= 3 and re.search(rf"\b{re.escape(norm_name)}\b", clean_text):
+            score += 10.0 + len(norm_name) * 0.2
+
+        b_tokens = [
+            tok for tok in norm_name.split()
+            if len(tok) >= 3 and tok not in _BUDGET_STOPWORDS
+        ]
+        if b_tokens:
+            matched_tokens = [tok for tok in b_tokens if tok in msg_tokens]
+            if matched_tokens:
+                score += len(matched_tokens) * 4.0 + (len(matched_tokens) / len(b_tokens)) * 2.0
+
+        if score > best_score:
+            best_score = score
+            best_budget = b
+
+    return best_budget if best_score >= 4.0 else None
+
+
+def parse_transaction_text(
+    raw_text: str,
+    user_wallets: Optional[List[str]] = None,
+    custom_categories: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Parses natural text input into structured transaction parameters."""
     text_lower = raw_text.lower().strip()
 
@@ -104,27 +156,41 @@ def parse_transaction_text(raw_text: str, user_wallets: Optional[List[str]] = No
     parsed_amt = parse_indonesian_amount(text_lower)
     amount, currency = parsed_amt if parsed_amt else (0.0, "IDR")
 
-    # Detect Category
+    # Detect Category (check custom user categories first, then system keyword map)
     category_name = "Lain-lain"
     if tx_type == "INCOME":
         category_name = "Gaji & Pendapatan"
     else:
-        for cat, keywords in CATEGORY_KEYWORDS.items():
-            if any(k in text_lower for k in keywords):
-                category_name = cat
-                break
+        matched_custom = None
+        if custom_categories:
+            for c_name in sorted(custom_categories, key=len, reverse=True):
+                if c_name and c_name.lower() in text_lower:
+                    matched_custom = c_name
+                    break
+        if matched_custom:
+            category_name = matched_custom
+        else:
+            for cat, keywords in CATEGORY_KEYWORDS.items():
+                if any(k in text_lower for k in keywords):
+                    category_name = cat
+                    break
 
-    # Detect Target Wallet
+    # Detect Target Wallet (match longest user wallet name first)
     detected_wallet = None
     if user_wallets:
-        for w in user_wallets:
-            if w.lower() in text_lower:
+        for w in sorted(user_wallets, key=len, reverse=True):
+            if w and re.search(rf"\b{re.escape(w.lower())}\b", text_lower):
                 detected_wallet = w
                 break
+        if not detected_wallet:
+            for w in sorted(user_wallets, key=len, reverse=True):
+                if w and w.lower() in text_lower:
+                    detected_wallet = w
+                    break
 
     if not detected_wallet:
         for w_key, aliases in WALLET_KEYWORDS.items():
-            if any(a in text_lower for a in aliases):
+            if any(re.search(rf"\b{re.escape(a)}\b", text_lower) for a in aliases):
                 detected_wallet = aliases[0].upper()
                 break
 

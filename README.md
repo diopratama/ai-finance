@@ -45,8 +45,10 @@ Saat backend dijalankan pertama kali, ia akan otomatis membuat semua tabel, inde
 ```bash
 docker-compose up --build
 ```
-- Dashboard Web: `http://localhost:3000`
-- Backend API Docs (Swagger): `http://localhost:8000/docs`
+Port mapping Docker (tidak konflik dengan project lain seperti ai-trading-agent):
+- Dashboard Web: `http://localhost:3001`
+- Backend API Docs (Swagger): `http://localhost:8001/docs`
+- PostgreSQL Host Port: `localhost:5434` (internal container: 5432)
 
 ### 3. Menjalankan Secara Manual (Lokal / Development)
 

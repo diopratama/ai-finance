@@ -3,6 +3,8 @@ import {
   Transaction,
   Category,
   Budget,
+  BudgetGroupItem,
+  MonthlyAllocationResponse,
   TransactionSummary,
   BotStatusMap,
   FIREMetrics,
@@ -16,7 +18,7 @@ import {
 const API_BASE = (
   typeof window !== "undefined"
     ? ""
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
 ).replace(/\/+$/, "");
 
 function getAuthHeader(): Record<string, string> {
@@ -67,7 +69,7 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
   if (res.status === 401 && typeof window !== "undefined" && !endpoint.startsWith("/auth/")) {
     localStorage.removeItem("ai_finance_token");
     localStorage.removeItem("ai_finance_user");
-    if (!window.location.pathname.startsWith("/login")) {
+    if (!window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/register") && window.location.pathname !== "/") {
       window.location.href = "/login";
     }
     throw new Error("Unauthorized");
@@ -109,15 +111,16 @@ export async function registerUser(data: { email: string; password: string; full
 }
 
 // ----------------- WALLETS -----------------
-export async function getWallets(): Promise<{ total_balance: number; currency: string; wallets: Wallet[] }> {
+export async function getWallets(month?: string): Promise<{ total_balance: number; currency: string; month_key?: string; wallets: Wallet[] }> {
   try {
-    return await apiFetch("/wallets");
+    const q = month ? `?month=${encodeURIComponent(month)}` : "";
+    return await apiFetch(`/wallets${q}`);
   } catch {
     return {
       total_balance: 16250000,
       currency: "IDR",
       wallets: [
-        { id: "1", name: "Bank BCA", type: "BANK", balance: 15000000, currency: "IDR", color: "#3b82f6", is_default: false, created_at: new Date().toISOString() },
+        { id: "1", name: "Bank BCA", type: "BANK", balance: 15000000, currency: "IDR", color: "#f0b000", is_default: false, created_at: new Date().toISOString() },
         { id: "2", name: "GoPay", type: "EWALLET", balance: 750000, currency: "IDR", color: "#06b6d4", is_default: false, created_at: new Date().toISOString() },
         { id: "3", name: "Cash Dompet", type: "CASH", balance: 500000, currency: "IDR", color: "#10b981", is_default: true, created_at: new Date().toISOString() },
       ],
@@ -129,6 +132,13 @@ export async function createWallet(data: { name: string; type: string; balance: 
   return apiFetch("/wallets", { method: "POST", body: JSON.stringify(data) });
 }
 
+export async function updateWallet(
+  walletId: string,
+  data: Partial<{ name: string; type: string; balance: number; color: string; is_default: boolean; is_archived: boolean }>
+): Promise<Wallet> {
+  return apiFetch(`/wallets/${walletId}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
 export async function transferFunds(data: { from_wallet_id: string; to_wallet_id: string; amount: number; description?: string }) {
   return apiFetch("/wallets/transfer", { method: "POST", body: JSON.stringify(data) });
 }
@@ -138,29 +148,41 @@ export async function deleteWallet(walletId: string) {
 }
 
 // ----------------- TRANSACTIONS -----------------
-export async function getTransactions(params?: { wallet_id?: string; category_id?: string; type?: string; search?: string; limit?: number; offset?: number }): Promise<{ total: number; items: Transaction[] }> {
+export async function getTransactions(params?: {
+  wallet_id?: string;
+  category_id?: string;
+  budget_id?: string;
+  type?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ total: number; items: Transaction[] }> {
   try {
     const q = new URLSearchParams();
     if (params?.wallet_id) q.append("wallet_id", params.wallet_id);
     if (params?.category_id) q.append("category_id", params.category_id);
+    if (params?.budget_id) q.append("budget_id", params.budget_id);
     if (params?.type) q.append("type", params.type);
     if (params?.search) q.append("search", params.search);
     if (params?.limit) q.append("limit", params.limit.toString());
     const queryStr = q.toString() ? `?${q.toString()}` : "";
     return await apiFetch(`/transactions${queryStr}`);
   } catch {
-    return {
-      total: 3,
-      items: [
-        { id: "1", type: "EXPENSE", amount: 28000, currency: "IDR", amount_in_base: 28000, description: "Kopi Kenangan", merchant: "Kopi Kenangan", wallet: { id: "2", name: "GoPay", color: "#06b6d4" }, category: { id: "c1", name: "Makanan & Minuman", icon: "utensils", color: "#ef4444" }, raw_source: "TELEGRAM", transaction_date: new Date().toISOString() },
-        { id: "2", type: "EXPENSE", amount: 50000, currency: "IDR", amount_in_base: 50000, description: "Bensin Pertamax", merchant: "SPBU Pertamina", wallet: { id: "3", name: "Cash Dompet", color: "#10b981" }, category: { id: "c2", name: "Transportasi", icon: "car", color: "#f97316" }, raw_source: "WEB", transaction_date: new Date(Date.now() - 86400000).toISOString() },
-        { id: "3", type: "INCOME", amount: 12000000, currency: "IDR", amount_in_base: 12000000, description: "Gaji Bulanan", merchant: null, wallet: { id: "1", name: "Bank BCA", color: "#3b82f6" }, category: { id: "c3", name: "Gaji & Pendapatan", icon: "wallet", color: "#22c55e" }, raw_source: "WEB", transaction_date: new Date(Date.now() - 172800000).toISOString() },
-      ],
-    };
+    return { total: 0, items: [] };
   }
 }
 
-export async function createTransaction(data: { wallet_id: string; category_id?: string; type: string; amount: number; description: string; merchant?: string; raw_source?: string; transaction_date?: string }): Promise<Transaction> {
+export async function createTransaction(data: {
+  wallet_id?: string;
+  category_id?: string;
+  budget_id?: string;
+  type: string;
+  amount: number;
+  description: string;
+  merchant?: string;
+  raw_source?: string;
+  transaction_date?: string;
+}): Promise<Transaction> {
   return apiFetch("/transactions", { method: "POST", body: JSON.stringify(data) });
 }
 
@@ -174,27 +196,26 @@ export async function getTransactionSummary(): Promise<TransactionSummary> {
   } catch {
     return {
       currency: "IDR",
-      total_income: 12000000,
-      total_expense: 78000,
-      net_savings: 11922000,
-      category_breakdown: [
-        { name: "Makanan & Minuman", color: "#ef4444", total: 28000 },
-        { name: "Transportasi", color: "#f97316", total: 50000 },
-      ],
+      total_income: 0,
+      total_expense: 0,
+      net_savings: 0,
+      category_breakdown: [],
     };
   }
 }
 
-// ----------------- BUDGETS & CATEGORIES -----------------
-export async function getBudgets(): Promise<Budget[]> {
+// ----------------- BUDGETS, ALLOCATIONS & CATEGORIES -----------------
+export async function getBudgetAllocation(month?: string): Promise<MonthlyAllocationResponse> {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  return apiFetch(`/budgets/allocation${q}`);
+}
+
+export async function getBudgets(month?: string): Promise<Budget[]> {
   try {
-    return await apiFetch("/budgets");
+    const q = month ? `?month=${encodeURIComponent(month)}` : "";
+    return await apiFetch(`/budgets${q}`);
   } catch {
-    return [
-      { id: "b1", category: { id: "c1", name: "Makanan & Minuman", icon: "utensils", color: "#ef4444" }, limit_amount: 3000000, spent_amount: 1450000, remaining_amount: 1550000, percent_used: 48.3, is_over_budget: false, period: "MONTHLY" },
-      { id: "b2", category: { id: "c2", name: "Transportasi", icon: "car", color: "#f97316" }, limit_amount: 1000000, spent_amount: 350000, remaining_amount: 650000, percent_used: 35.0, is_over_budget: false, period: "MONTHLY" },
-      { id: "b3", category: { id: "c4", name: "Hiburan & Rekreasi", icon: "film", color: "#8b5cf6" }, limit_amount: 750000, spent_amount: 680000, remaining_amount: 70000, percent_used: 90.7, is_over_budget: false, period: "MONTHLY" },
-    ];
+    return [];
   }
 }
 
@@ -202,24 +223,150 @@ export async function getCategories(): Promise<Category[]> {
   try {
     return await apiFetch("/budgets/categories");
   } catch {
-    return [
-      { id: "c1", name: "Makanan & Minuman", icon: "utensils", color: "#ef4444", type: "EXPENSE", is_system: true },
-      { id: "c2", name: "Transportasi", icon: "car", color: "#f97316", type: "EXPENSE", is_system: true },
-      { id: "c3", name: "Belanja", icon: "shopping-bag", color: "#eab308", type: "EXPENSE", is_system: true },
-      { id: "c4", name: "Tagihan & Utilitas", icon: "receipt", color: "#06b6d4", type: "EXPENSE", is_system: true },
-      { id: "c5", name: "Hiburan & Rekreasi", icon: "film", color: "#8b5cf6", type: "EXPENSE", is_system: true },
-      { id: "c6", name: "Gaji & Pendapatan", icon: "wallet", color: "#22c55e", type: "INCOME", is_system: true },
-      { id: "c7", name: "Lain-lain", icon: "more-horizontal", color: "#64748b", type: "EXPENSE", is_system: true },
-    ];
+    return [];
   }
 }
 
-export async function createBudget(data: { category_id: string; limit_amount: number; period?: string }): Promise<Budget> {
+export async function createCustomCategory(data: {
+  name: string;
+  type?: "EXPENSE" | "INCOME";
+  color?: string;
+  icon?: string;
+}): Promise<Category> {
+  return apiFetch("/budgets/categories", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateCustomCategory(
+  categoryId: string,
+  data: Partial<{ name: string; type: "EXPENSE" | "INCOME"; color: string; icon: string }>
+): Promise<Category> {
+  return apiFetch(`/budgets/categories/${categoryId}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function deleteCustomCategory(categoryId: string) {
+  return apiFetch(`/budgets/categories/${categoryId}`, { method: "DELETE" });
+}
+
+export async function createBudget(data: {
+  name?: string;
+  group_type?: string;
+  limit_amount: number;
+  remark?: string;
+  wallet_id?: string | null;
+  category_id?: string | null;
+  month_key?: string;
+  is_sinking_fund?: boolean;
+  rollover_balance?: number;
+  funded_this_month?: number;
+  period?: string;
+}): Promise<Budget> {
   return apiFetch("/budgets", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateBudget(
+  budgetId: string,
+  data: Partial<{
+    name: string;
+    group_type: string;
+    limit_amount: number;
+    remark: string;
+    wallet_id: string | null;
+    category_id: string | null;
+    is_sinking_fund: boolean;
+    rollover_balance: number;
+    funded_this_month: number;
+    sort_order: number;
+  }>
+): Promise<Budget> {
+  return apiFetch(`/budgets/${budgetId}`, { method: "PUT", body: JSON.stringify(data) });
 }
 
 export async function deleteBudget(budgetId: string) {
   return apiFetch(`/budgets/${budgetId}`, { method: "DELETE" });
+}
+
+export async function getBudgetGroups(): Promise<BudgetGroupItem[]> {
+  try {
+    return await apiFetch("/budgets/groups");
+  } catch {
+    return [];
+  }
+}
+
+export async function createBudgetGroup(data: {
+  name: string;
+  is_sinking_fund?: boolean;
+  sort_order?: number;
+}): Promise<BudgetGroupItem> {
+  return apiFetch("/budgets/groups", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateBudgetGroup(
+  groupId: string,
+  data: Partial<{ name: string; is_sinking_fund: boolean; sort_order: number }>
+): Promise<BudgetGroupItem> {
+  return apiFetch(`/budgets/groups/${groupId}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function deleteBudgetGroup(
+  groupId: string,
+  options?: { action?: "cascade" | "reassign"; reassign_to_id?: string; reassign_to_name?: string }
+): Promise<{ success: boolean; deleted_group_id: string; items_affected: number; action_taken: string }> {
+  const q = new URLSearchParams();
+  if (options?.action) q.append("action", options.action);
+  if (options?.reassign_to_id) q.append("reassign_to_id", options.reassign_to_id);
+  if (options?.reassign_to_name) q.append("reassign_to_name", options.reassign_to_name);
+  const qs = q.toString() ? `?${q.toString()}` : "";
+  return apiFetch(`/budgets/groups/${groupId}${qs}`, { method: "DELETE" });
+}
+
+export async function renameBudgetGroup(data: {
+  old_group_type: string;
+  new_group_type: string;
+  month_key?: string;
+  is_sinking_fund?: boolean;
+}) {
+  return apiFetch("/budgets/groups/rename", { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function updateReferenceIncome(monthly_income: number) {
+  return apiFetch<{ monthly_income: number }>("/budgets/reference-income", {
+    method: "PUT",
+    body: JSON.stringify({ monthly_income }),
+  });
+}
+
+export async function copyPreviousMonthBudgets(data: {
+  target_month: string;
+  source_month?: string;
+  overwrite?: boolean;
+}): Promise<{ copied_count: number; source_month: string; target_month: string; allocation: MonthlyAllocationResponse }> {
+  return apiFetch("/budgets/copy-month", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function distributePaydayToWallets(data: {
+  source_wallet_id: string;
+  month_key?: string;
+  transfers?: Array<{ to_wallet_id: string; amount: number }>;
+  mode?: "SHORTFALL" | "FULL_BUDGET";
+  auto_fund_sinking?: boolean;
+}): Promise<{ message: string; transfers_executed: Array<{ to_wallet_id: string; to_wallet_name: string; amount: number }>; allocation: MonthlyAllocationResponse }> {
+  return apiFetch("/budgets/distribute-payday", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function recordBudgetAction(
+  budgetId: string,
+  data: {
+    mode: "EXPENSE" | "FUND_SINKING";
+    amount?: number;
+    wallet_id?: string;
+    description?: string;
+  }
+) {
+  return apiFetch<{ mode: string; item: Budget; transaction_id?: string; wallet_balance?: number }>(
+    `/budgets/${budgetId}/record`,
+    { method: "POST", body: JSON.stringify(data) }
+  );
 }
 
 // ----------------- BOT PAIRING & SIMULATION -----------------
@@ -243,7 +390,7 @@ export async function unlinkBot(platform: "telegram" | "whatsapp") {
 }
 
 export async function simulateChatMessage(message: string, source: string = "TELEGRAM", receipt_data?: any) {
-  return apiFetch<{ success: boolean; message: string; transaction_id?: string; parsed?: any; wallet?: any }>("/webhooks/simulate-chat", {
+  return apiFetch<{ success: boolean; message: string; transaction_id?: string; parsed?: any; matched_budget?: any; wallet?: any }>("/webhooks/simulate-chat", {
     method: "POST",
     body: JSON.stringify({ message, source, receipt_data }),
   });
@@ -293,7 +440,7 @@ export async function getPlannerOverview(): Promise<{
         description: "Keseimbangan ideal antara apresiasi modal jangka panjang dan stabilitas arus kas.",
         expected_cagr: "8.5% - 10.5%",
         allocations: [
-          { asset: "Saham & Reksa Dana Saham", percentage: 40, color: "#8b5cf6" },
+          { asset: "Saham & Reksa Dana Saham", percentage: 40, color: "#f0b000" },
           { asset: "Obligasi Negara / SBN", percentage: 30, color: "#3b82f6" },
           { asset: "Reksa Dana Pendapatan Tetap & Pasar Uang", percentage: 15, color: "#10b981" },
           { asset: "Emas Fisik / Antam", percentage: 10, color: "#eab308" },
@@ -416,7 +563,7 @@ export async function getFIREProfile(): Promise<{ profile: any; metrics: FIREMet
         description: "Alokasi berimbang untuk akselerasi pertumbuhan modal menuju FIRE.",
         expected_cagr: "9.0%",
         allocations: [
-          { asset: "Saham IDX & US ETF", percentage: 40, color: "#8b5cf6" },
+          { asset: "Saham IDX & US ETF", percentage: 40, color: "#f0b000" },
           { asset: "Obligasi Negara / SBN", percentage: 30, color: "#3b82f6" },
           { asset: "Pasar Uang & Likuid", percentage: 15, color: "#10b981" },
           { asset: "Emas", percentage: 10, color: "#eab308" },

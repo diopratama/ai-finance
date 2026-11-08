@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Generator
+from typing import Generator, List, Optional
 
 from sqlalchemy import (
     Boolean,
@@ -53,6 +53,7 @@ class User(Base):
     categories = relationship("Category", back_populates="user", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
     budgets = relationship("Budget", back_populates="user", cascade="all, delete-orphan")
+    budget_groups = relationship("BudgetGroup", back_populates="user", cascade="all, delete-orphan")
     bot_links = relationship("BotLink", back_populates="user", cascade="all, delete-orphan")
     financial_profile = relationship("FinancialProfile", uselist=False, back_populates="user", cascade="all, delete-orphan")
     cfp_chats = relationship("CFPChatMessage", back_populates="user", cascade="all, delete-orphan")
@@ -63,11 +64,11 @@ class Wallet(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    name = Column(String(100), nullable=False)  # e.g., "Bank BCA", "GoPay", "Cash Dompet"
-    type = Column(String(32), default="BANK", nullable=False)  # BANK, EWALLET, CASH, INVESTMENT, CREDIT
+    name = Column(String(100), nullable=False)  # e.g., "Mandiri", "Jago", "Danamon", "Cash Dompet"
+    type = Column(String(64), default="BANK", nullable=False)  # Preset or custom type e.g. BANK, EWALLET, KANTONG DIGITAL, BANK SYARIAH
     balance = Column(Float, default=0.0, nullable=False)
     currency = Column(String(8), default="IDR", nullable=False)
-    color = Column(String(32), default="#3b82f6", nullable=False)
+    color = Column(String(32), default="#f0b000", nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)
     is_archived = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=_utc_now, nullable=False)
@@ -100,6 +101,7 @@ class Transaction(Base):
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     wallet_id = Column(String(36), ForeignKey("wallets.id", ondelete="CASCADE"), nullable=False, index=True)
     category_id = Column(String(36), ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
+    budget_id = Column(String(36), ForeignKey("budgets.id", ondelete="SET NULL"), nullable=True, index=True)
     to_wallet_id = Column(String(36), ForeignKey("wallets.id", ondelete="SET NULL"), nullable=True)  # For transfer
 
     type = Column(String(20), default="EXPENSE", nullable=False)  # EXPENSE, INCOME, TRANSFER
@@ -117,6 +119,7 @@ class Transaction(Base):
     user = relationship("User", back_populates="transactions")
     wallet = relationship("Wallet", back_populates="transactions", foreign_keys=[wallet_id])
     category = relationship("Category", back_populates="transactions")
+    budget = relationship("Budget", back_populates="transactions")
 
 
 class Budget(Base):
@@ -124,13 +127,37 @@ class Budget(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    category_id = Column(String(36), ForeignKey("categories.id", ondelete="CASCADE"), nullable=False, index=True)
+    category_id = Column(String(36), ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
+    wallet_id = Column(String(36), ForeignKey("wallets.id", ondelete="SET NULL"), nullable=True, index=True)
+    name = Column(String(160), nullable=True)  # Specific item e.g. "KPR", "Sekolah Aa dan Ade", "Nabung Umrah"
+    group_type = Column(String(64), default="LIVING NEEDS", nullable=False)  # e.g. LIVING NEEDS, LIFE STYLE, PREDICTABLE SAVING, or custom
+    remark = Column(String(255), nullable=True)
     limit_amount = Column(Float, nullable=False)
     period = Column(String(20), default="MONTHLY", nullable=False)
+    month_key = Column(String(7), nullable=True, index=True)  # Format "YYYY-MM"
+    is_sinking_fund = Column(Boolean, default=False, nullable=False)
+    rollover_balance = Column(Float, default=0.0, nullable=False)
+    funded_this_month = Column(Float, default=0.0, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=_utc_now, nullable=False)
 
     user = relationship("User", back_populates="budgets")
     category = relationship("Category", back_populates="budgets")
+    wallet = relationship("Wallet")
+    transactions = relationship("Transaction", back_populates="budget")
+
+
+class BudgetGroup(Base):
+    __tablename__ = "budget_groups"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    is_sinking_fund = Column(Boolean, default=False, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=_utc_now, nullable=False)
+
+    user = relationship("User", back_populates="budget_groups")
 
 
 class BotLink(Base):
@@ -205,6 +232,16 @@ _SCHEMA_MIGRATIONS = {
     ("wallets", "is_archived"): text("ALTER TABLE wallets ADD COLUMN is_archived BOOLEAN DEFAULT FALSE"),
     ("transactions", "raw_receipt_url"): text("ALTER TABLE transactions ADD COLUMN raw_receipt_url VARCHAR(1024)"),
     ("transactions", "merchant"): text("ALTER TABLE transactions ADD COLUMN merchant VARCHAR(128)"),
+    ("transactions", "budget_id"): text("ALTER TABLE transactions ADD COLUMN budget_id VARCHAR(36)"),
+    ("budgets", "wallet_id"): text("ALTER TABLE budgets ADD COLUMN wallet_id VARCHAR(36)"),
+    ("budgets", "name"): text("ALTER TABLE budgets ADD COLUMN name VARCHAR(160)"),
+    ("budgets", "group_type"): text("ALTER TABLE budgets ADD COLUMN group_type VARCHAR(64) DEFAULT 'LIVING NEEDS'"),
+    ("budgets", "remark"): text("ALTER TABLE budgets ADD COLUMN remark VARCHAR(255)"),
+    ("budgets", "month_key"): text("ALTER TABLE budgets ADD COLUMN month_key VARCHAR(7)"),
+    ("budgets", "is_sinking_fund"): text("ALTER TABLE budgets ADD COLUMN is_sinking_fund BOOLEAN DEFAULT FALSE"),
+    ("budgets", "rollover_balance"): text("ALTER TABLE budgets ADD COLUMN rollover_balance FLOAT DEFAULT 0"),
+    ("budgets", "funded_this_month"): text("ALTER TABLE budgets ADD COLUMN funded_this_month FLOAT DEFAULT 0"),
+    ("budgets", "sort_order"): text("ALTER TABLE budgets ADD COLUMN sort_order INTEGER DEFAULT 0"),
     ("financial_profiles", "monthly_income"): text("ALTER TABLE financial_profiles ADD COLUMN monthly_income FLOAT DEFAULT 0"),
     ("financial_profiles", "monthly_debt_payment"): text("ALTER TABLE financial_profiles ADD COLUMN monthly_debt_payment FLOAT DEFAULT 0"),
     ("financial_profiles", "marital_status"): text("ALTER TABLE financial_profiles ADD COLUMN marital_status VARCHAR(24) DEFAULT 'SINGLE'"),
@@ -231,6 +268,52 @@ def _ensure_schema_columns() -> None:
                     logger.info("Auto-migrated column: %s.%s", table_name, column_name)
                 except Exception as err:
                     logger.debug("Column addition ignored or already applied: %s", err)
+
+        # Relax NOT NULL on budgets.category_id and widen wallets.type on PostgreSQL
+        if not settings.DATABASE_URL.startswith("sqlite"):
+            if "budgets" in existing_tables:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("ALTER TABLE budgets ALTER COLUMN category_id DROP NOT NULL"))
+                except Exception as err:
+                    logger.debug("budgets.category_id nullable check skipped: %s", err)
+            if "wallets" in existing_tables:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("ALTER TABLE wallets ALTER COLUMN type TYPE VARCHAR(64)"))
+                except Exception as err:
+                    logger.debug("wallets.type widen skipped: %s", err)
+
+        # Backfill legacy budget rows missing month_key or name
+        if "budgets" in existing_tables:
+            now_mk = _utc_now().strftime("%Y-%m")
+            db = SessionLocal()
+            try:
+                legacy_rows = db.query(Budget).filter(
+                    (Budget.month_key == None) | (Budget.name == None) | (Budget.group_type == None)
+                ).all()
+                if legacy_rows:
+                    for b in legacy_rows:
+                        if not b.month_key:
+                            b.month_key = now_mk
+                        if not b.group_type:
+                            b.group_type = "LIVING NEEDS"
+                        if not b.name:
+                            b.name = b.category.name if b.category else "Pos Anggaran"
+                        if b.is_sinking_fund is None:
+                            b.is_sinking_fund = False
+                        if b.rollover_balance is None:
+                            b.rollover_balance = 0.0
+                        if b.funded_this_month is None:
+                            b.funded_this_month = 0.0
+                        if b.sort_order is None:
+                            b.sort_order = 0
+                    db.commit()
+            except Exception as err:
+                logger.debug("Budget backfill notice: %s", err)
+                db.rollback()
+            finally:
+                db.close()
     except Exception as e:
         logger.warning("Dynamic schema update notice: %s", e)
 
@@ -249,6 +332,61 @@ DEFAULT_CATEGORIES = [
     {"name": "Hasil Investasi / Dividen", "icon": "pie-chart", "color": "#6366f1", "type": "INCOME"},
     {"name": "Lain-lain", "icon": "more-horizontal", "color": "#64748b", "type": "EXPENSE"},
 ]
+
+DEFAULT_BUDGET_GROUPS = [
+    {"name": "LIVING NEEDS", "is_sinking_fund": False, "sort_order": 1},
+    {"name": "LIFE STYLE", "is_sinking_fund": False, "sort_order": 2},
+    {"name": "ZAKAT DAN SEDEKAH", "is_sinking_fund": False, "sort_order": 3},
+    {"name": "PREDICTABLE SAVING", "is_sinking_fund": True, "sort_order": 4},
+]
+
+
+def ensure_user_default_groups(db: Session, user_id: str) -> List[BudgetGroup]:
+    """Ensures a user has budget groups configured, seeding defaults if needed."""
+    existing = (
+        db.query(BudgetGroup)
+        .filter(BudgetGroup.user_id == user_id)
+        .order_by(BudgetGroup.sort_order.asc(), BudgetGroup.created_at.asc())
+        .all()
+    )
+    if not existing:
+        for g in DEFAULT_BUDGET_GROUPS:
+            db.add(
+                BudgetGroup(
+                    user_id=user_id,
+                    name=g["name"],
+                    is_sinking_fund=g["is_sinking_fund"],
+                    sort_order=g["sort_order"],
+                )
+            )
+        db.flush()
+
+        # Also pull any custom groups already used in user's existing budgets
+        legacy_custom_types = [
+            r[0].strip().upper()
+            for r in db.query(Budget.group_type).filter(Budget.user_id == user_id).distinct().all()
+            if r[0] and r[0].strip().upper() not in [dg["name"] for dg in DEFAULT_BUDGET_GROUPS]
+        ]
+        next_order = 5
+        for ct in legacy_custom_types:
+            db.add(
+                BudgetGroup(
+                    user_id=user_id,
+                    name=ct,
+                    is_sinking_fund=False,
+                    sort_order=next_order,
+                )
+            )
+            next_order += 1
+        db.commit()
+
+        existing = (
+            db.query(BudgetGroup)
+            .filter(BudgetGroup.user_id == user_id)
+            .order_by(BudgetGroup.sort_order.asc(), BudgetGroup.created_at.asc())
+            .all()
+        )
+    return existing
 
 
 def ensure_default_seeds() -> None:
@@ -290,6 +428,9 @@ def ensure_default_seeds() -> None:
                 db.add(Wallet(user_id=admin_user.id, name="Cash Dompet", type="CASH", balance=500000.0, color="#10b981", is_default=True))
                 db.add(Wallet(user_id=admin_user.id, name="Bank BCA", type="BANK", balance=15000000.0, color="#3b82f6", is_default=False))
                 db.add(Wallet(user_id=admin_user.id, name="GoPay", type="EWALLET", balance=750000.0, color="#06b6d4", is_default=False))
+
+                # Default groups for admin
+                ensure_user_default_groups(db, admin_user.id)
 
                 # Starter financial profile
                 db.add(FinancialProfile(user_id=admin_user.id, current_age=28, target_fire_age=45, monthly_living_expense=8000000.0, fire_target_amount=2400000000.0))

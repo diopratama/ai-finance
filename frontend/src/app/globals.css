@@ -3,18 +3,59 @@
 @tailwind utilities;
 
 :root {
-  --background: 222 47% 11%;
-  --foreground: 210 40% 98%;
-  --card: 217 33% 17%;
-  --card-foreground: 210 40% 98%;
-  --border: 217 33% 25%;
+  --background-rgb: 252 251 249;
+  --foreground-rgb: 28 26 23;
+  --card-rgb: 255 255 255;
+  --card-foreground-rgb: 28 26 23;
+  --primary-rgb: 240 176 0;
+  --primary-foreground-rgb: 12 10 0;
+  --secondary-rgb: 244 243 239;
+  --secondary-foreground-rgb: 38 36 32;
+  --muted-rgb: 241 239 233;
+  --muted-foreground-rgb: 87 83 74;
+  --sidebar-rgb: 250 249 246;
+  --sidebar-foreground-rgb: 28 26 23;
+
+  --accent: rgba(240, 176, 0, 0.14);
+  --accent-foreground: #8a6300;
+  --border: #e2dfd7;
+  --sidebar-border: #e8e5dd;
+  --input: #d6d2c8;
+  --ring: #f0b000;
 }
 
-body {
-  color: hsl(var(--foreground));
-  background-color: hsl(var(--background));
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
-  min-height: 100vh;
+.dark {
+  --background-rgb: 20 18 14;
+  --foreground-rgb: 247 246 242;
+  --card-rgb: 30 27 21;
+  --card-foreground-rgb: 247 246 242;
+  --primary-rgb: 240 176 0;
+  --primary-foreground-rgb: 12 10 0;
+  --secondary-rgb: 42 38 30;
+  --secondary-foreground-rgb: 244 243 239;
+  --muted-rgb: 37 33 26;
+  --muted-foreground-rgb: 168 162 150;
+  --sidebar-rgb: 24 22 17;
+  --sidebar-foreground-rgb: 247 246 242;
+
+  --accent: rgba(240, 176, 0, 0.14);
+  --accent-foreground: #f0b000;
+  --border: rgba(240, 176, 0, 0.16);
+  --sidebar-border: rgba(240, 176, 0, 0.14);
+  --input: rgba(240, 176, 0, 0.22);
+  --ring: #f0b000;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    color: rgb(var(--foreground-rgb));
+    background-color: rgb(var(--background-rgb));
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+    min-height: 100vh;
+  }
 }
 
 /* Custom scrollbars */
@@ -26,10 +67,9 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: rgba(240, 176, 0, 0.28);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: rgba(240, 176, 0, 0.5);
 }
-

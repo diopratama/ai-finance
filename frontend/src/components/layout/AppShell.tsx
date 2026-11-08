@@ -9,37 +9,39 @@ import { hasAuthToken } from "@/lib/api";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const isLoginRoute = pathname?.startsWith("/login");
+  const isPublicRoute =
+    pathname === "/" ||
+    pathname?.startsWith("/login") ||
+    pathname?.startsWith("/register");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!isLoginRoute && !hasAuthToken()) {
+    if (!isPublicRoute && !hasAuthToken()) {
       router.replace("/login");
       return;
     }
     setReady(true);
-  }, [isLoginRoute, router]);
+  }, [isPublicRoute, router]);
 
-  if (isLoginRoute) {
+  if (isPublicRoute) {
     return <>{children}</>;
   }
 
   if (!ready) {
     return (
-      <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center text-slate-400 text-xs">
+      <div className="min-h-screen w-full bg-background flex items-center justify-center text-muted-foreground text-xs">
         Memuat sesi...
       </div>
     );
   }
 
   return (
-    <div className="bg-slate-950 text-slate-100 flex min-h-screen w-full">
+    <div className="bg-background text-foreground flex min-h-screen w-full">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <Navbar />
-        <main className="flex-1 p-8 overflow-y-auto">{children}</main>
+        <main className="flex-1 p-6 sm:p-8 overflow-y-auto">{children}</main>
       </div>
     </div>
   );
 }
-
