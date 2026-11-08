@@ -11,6 +11,7 @@ import {
   Sparkles,
   Flame,
   ShieldCheck,
+  UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppLogo } from "@/components/AppLogo";
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { href: "/bot-pairing", label: "Chatbot (WA & TG)", icon: Bot },
   { href: "/planner", label: "AI Financial Planner", icon: Sparkles, badge: "AI" },
   { href: "/fire", label: "FIRE Simulator", icon: Flame },
+  { href: "/settings", label: "Pengaturan Profil", icon: UserCog },
 ];
 
 export function Sidebar() {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { PlusCircle, Bot, Sparkles, Database, LogOut } from "lucide-react";
+import { PlusCircle, Bot, Sparkles, Database, LogOut, User as UserIcon } from "lucide-react";
 import { AuthUser, getStoredUser, logoutUser } from "@/lib/api";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
@@ -54,6 +54,17 @@ export function Navbar() {
           <PlusCircle className="w-4 h-4" />
           <span>+ Transaksi</span>
         </Link>
+
+        {user && (
+          <Link
+            href="/settings"
+            title="Pengaturan Profil"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-secondary hover:bg-accent text-foreground border border-border transition-colors"
+          >
+            <UserIcon className="w-3.5 h-3.5 text-[#8a6300] dark:text-[#f0b000]" />
+            <span className="hidden sm:inline max-w-[120px] truncate">{user.full_name || user.email}</span>
+          </Link>
+        )}
 
         {user && (
           <button

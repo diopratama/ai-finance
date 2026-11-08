@@ -33,6 +33,7 @@ export interface AuthUser {
   full_name: string | null;
   base_currency: string;
   role: string;
+  is_verified?: boolean;
 }
 
 export function getStoredUser(): AuthUser | null {
@@ -98,16 +99,72 @@ export async function loginUser(email: string, password: string): Promise<{ acce
   return res;
 }
 
-export async function registerUser(data: { email: string; password: string; full_name?: string; base_currency?: string }): Promise<{ access_token: string; user: AuthUser }> {
-  const res = await apiFetch<{ access_token: string; user: AuthUser }>("/auth/register", {
+export interface RegisterResult {
+  status: string;
+  email: string;
+  full_name: string;
+  message: string;
+  is_verified: boolean;
+}
+
+export async function registerUser(data: {
+  email: string;
+  password: string;
+  full_name: string;
+  base_currency?: string;
+}): Promise<RegisterResult> {
+  return await apiFetch<RegisterResult>("/auth/register", {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export async function verifyEmail(email: string, code: string): Promise<{ access_token: string; user: AuthUser }> {
+  const res = await apiFetch<{ access_token: string; user: AuthUser }>("/auth/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
   });
   if (typeof window !== "undefined") {
     localStorage.setItem("ai_finance_token", res.access_token);
     localStorage.setItem("ai_finance_user", JSON.stringify(res.user));
   }
   return res;
+}
+
+export async function resendVerification(email: string): Promise<{ ok: boolean; message: string }> {
+  return await apiFetch<{ ok: boolean; message: string }>("/auth/resend-verification", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function getUserProfile(): Promise<AuthUser & { created_at: string }> {
+  return await apiFetch<AuthUser & { created_at: string }>("/auth/profile");
+}
+
+export async function updateUserProfile(data: {
+  full_name: string;
+  email: string;
+  base_currency?: string;
+}): Promise<AuthUser & { created_at: string }> {
+  const res = await apiFetch<AuthUser & { created_at: string }>("/auth/profile", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  if (typeof window !== "undefined") {
+    localStorage.setItem("ai_finance_user", JSON.stringify(res));
+  }
+  return res;
+}
+
+export async function changePassword(data: {
+  old_password: string;
+  new_password: string;
+}): Promise<{ ok: boolean; message: string }> {
+  return await apiFetch<{ ok: boolean; message: string }>("/auth/change-password", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
 }
 
 // ----------------- WALLETS -----------------

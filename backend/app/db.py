@@ -47,6 +47,9 @@ class User(Base):
     full_name = Column(String(255), nullable=True)
     base_currency = Column(String(8), default="IDR", nullable=False)
     role = Column(String(20), default="user", nullable=False)  # "admin" | "user"
+    is_verified = Column(Boolean, default=False, nullable=False)
+    verification_code = Column(String(8), nullable=True, index=True)
+    verification_expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_utc_now, nullable=False)
 
     wallets = relationship("Wallet", back_populates="user", cascade="all, delete-orphan")
@@ -249,6 +252,9 @@ _SCHEMA_MIGRATIONS = {
     ("financial_profiles", "sharia_preference"): text("ALTER TABLE financial_profiles ADD COLUMN sharia_preference BOOLEAN DEFAULT FALSE"),
     ("financial_profiles", "memory_notes"): text("ALTER TABLE financial_profiles ADD COLUMN memory_notes TEXT"),
     ("financial_profiles", "confirmed_profile_fields"): text("ALTER TABLE financial_profiles ADD COLUMN confirmed_profile_fields TEXT DEFAULT '[]'"),
+    ("users", "is_verified"): text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT FALSE"),
+    ("users", "verification_code"): text("ALTER TABLE users ADD COLUMN verification_code VARCHAR(8)"),
+    ("users", "verification_expires_at"): text("ALTER TABLE users ADD COLUMN verification_expires_at TIMESTAMP"),
 }
 
 
@@ -271,6 +277,13 @@ def _ensure_schema_columns() -> None:
 
         # Relax NOT NULL on budgets.category_id and widen wallets.type on PostgreSQL
         if not settings.DATABASE_URL.startswith("sqlite"):
+            if "users" in existing_tables:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE users SET is_verified = TRUE WHERE is_verified IS NULL OR (is_verified = FALSE AND verification_code IS NULL)"))
+                except Exception as err:
+                    logger.debug("users.is_verified legacy backfill skipped: %s", err)
+
             if "budgets" in existing_tables:
                 try:
                     with engine.begin() as conn:
@@ -420,6 +433,7 @@ def ensure_default_seeds() -> None:
                     full_name="Admin AI-Finance",
                     base_currency="IDR",
                     role="admin",
+                    is_verified=True,
                 )
                 db.add(admin_user)
                 db.flush()

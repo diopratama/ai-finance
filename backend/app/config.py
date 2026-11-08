@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     WHATSAPP_PHONE_NUMBER_ID: Optional[str] = None
     WHATSAPP_VERIFY_TOKEN: Optional[str] = "ai-finance-wa-verify"
 
+    # Resend Email Integration
+    RESEND_API_KEY: Optional[str] = None
+    RESEND_FROM_EMAIL: str = "AI-Finance <onboarding@resend.dev>"
+
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:3001,http://127.0.0.1:3001,http://localhost:3000,http://127.0.0.1:3000"
 
