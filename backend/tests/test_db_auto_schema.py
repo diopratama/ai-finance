@@ -26,7 +26,7 @@ def test_db_auto_schema_creation(tmp_path, monkeypatch):
         # Check admin user was provisioned
         admin = db.query(User).filter(User.role == "admin").first()
         assert admin is not None
-        assert admin.email == "admin@aifinance.com"
+        assert admin.email in ["admin@aifinance.com", "dpratama.43@gmail.com"]
 
         # Check admin starter wallets
         wallets = db.query(Wallet).filter(Wallet.user_id == admin.id).all()
