@@ -1,14 +1,14 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
+import Link from "next/link";
 import {
   Sparkles,
   Send,
   ShieldCheck,
   PieChart,
   SlidersHorizontal,
-  ChevronDown,
-  ChevronUp,
+  ArrowRight,
   CheckCircle2,
   Trash2,
   Brain,
@@ -93,41 +93,16 @@ export default function FinancialPlannerPage() {
   const [profile, setProfile] = useState<PersonalProfile | null>(null);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
   const [autoUpdatedNotice, setAutoUpdatedNotice] = useState(false);
-  const [showProfileForm, setShowProfileForm] = useState(false);
-  const [savingProfile, setSavingProfile] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Optional quick-fill form state
-  const [incomeInput, setIncomeInput] = useState<number>(0);
-  const [expenseInput, setExpenseInput] = useState<number>(8000000);
-  const [debtInput, setDebtInput] = useState<number>(0);
-  const [maritalInput, setMaritalInput] = useState<"SINGLE" | "MARRIED">("SINGLE");
-  const [dependentsInput, setDependentsInput] = useState<number>(0);
-  const [ageInput, setAgeInput] = useState<number>(28);
-  const [fireAgeInput, setFireAgeInput] = useState<number>(50);
-  const [riskInput, setRiskInput] = useState<"CONSERVATIVE" | "MODERATE" | "AGGRESSIVE">("MODERATE");
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const syncProfileForm = (p?: PersonalProfile) => {
-    if (!p) return;
-    setProfile(p);
-    setIncomeInput(p.monthly_income || 0);
-    setExpenseInput(p.monthly_living_expense || 8000000);
-    setDebtInput(p.monthly_debt_payment || 0);
-    setMaritalInput(p.marital_status || "SINGLE");
-    setDependentsInput(p.dependents_count || 0);
-    setAgeInput(p.current_age || 28);
-    setFireAgeInput(p.target_fire_age || 50);
-    setRiskInput(p.risk_tolerance || "MODERATE");
-  };
 
   const refreshOverview = async () => {
     const overview = await getPlannerOverview();
     setHealthContext(overview.context);
     setAllocations(overview.allocations);
     if (overview.personal_profile) {
-      syncProfileForm(overview.personal_profile);
+      setProfile(overview.personal_profile);
     }
   };
 
@@ -139,7 +114,7 @@ export default function FinancialPlannerPage() {
         setHealthContext(overview.context);
         setAllocations(overview.allocations);
         if (overview.personal_profile) {
-          syncProfileForm(overview.personal_profile);
+          setProfile(overview.personal_profile);
         }
       } finally {
         setLoading(false);
@@ -158,34 +133,11 @@ export default function FinancialPlannerPage() {
       const updated = await updatePersonalProfile({ sharia_preference: nextVal });
       setHealthContext(updated.context);
       setAllocations(updated.allocations);
-      syncProfileForm(updated.personal_profile);
+      if (updated.personal_profile) {
+        setProfile(updated.personal_profile);
+      }
     } catch (err) {
       console.error("Failed toggling Sharia preference", err);
-    }
-  };
-
-  const handleSaveOptionalProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingProfile(true);
-    try {
-      const updated = await updatePersonalProfile({
-        monthly_income: incomeInput,
-        monthly_living_expense: expenseInput,
-        monthly_debt_payment: debtInput,
-        marital_status: maritalInput,
-        dependents_count: dependentsInput,
-        current_age: ageInput,
-        target_fire_age: fireAgeInput,
-        risk_tolerance: riskInput,
-      });
-      setHealthContext(updated.context);
-      setAllocations(updated.allocations);
-      syncProfileForm(updated.personal_profile);
-      setShowProfileForm(false);
-    } catch (err) {
-      console.error("Failed saving optional profile", err);
-    } finally {
-      setSavingProfile(false);
     }
   };
 
@@ -464,9 +416,8 @@ export default function FinancialPlannerPage() {
 
           {missingHints.length > 0 ? (
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              <strong className="text-foreground">Opsional:</strong> Ceritakan lewat chat atau isi cepat{" "}
-              <span className="text-[#8a6300] dark:text-[#f0b000] font-semibold">{missingHints.slice(0, 2).join(" & ").toLowerCase()}</span> supaya
-              hitungan dana darurat, rasio cicilan, &amp; portofolio makin presisi.
+              <strong className="text-foreground">Personalisasi Finansial:</strong> Lengkapi data{" "}
+              <span className="text-[#8a6300] dark:text-[#f0b000] font-semibold">{missingHints.slice(0, 2).join(" & ").toLowerCase()}</span> di menu Pengaturan agar analisis AI &amp; rekomendasi simulasi makin akurat.
             </p>
           ) : (
             <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium leading-relaxed">
@@ -515,123 +466,15 @@ export default function FinancialPlannerPage() {
             </div>
           )}
 
-          {/* Collapsible Optional Profile Quick-Editor */}
-          <button
-            type="button"
-            onClick={() => setShowProfileForm((v) => !v)}
-            className="w-full py-2 px-3 rounded-xl bg-secondary hover:bg-accent text-foreground text-xs font-semibold flex items-center justify-between border border-border transition-colors"
+          {/* Button redirect to Centralized Settings */}
+          <Link
+            href="/settings?tab=financial"
+            className="w-full py-2.5 px-3 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold flex items-center justify-center gap-2 shadow-sm shadow-[#f0b000]/20 transition-all text-center"
           >
-            <span>{showProfileForm ? "Tutup Form Profil Opsional" : "Lengkapi / Edit Profil (Opsional)"}</span>
-            {showProfileForm ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
-
-          {showProfileForm && (
-            <form onSubmit={handleSaveOptionalProfile} className="space-y-3 pt-2 border-t border-border text-xs">
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="block text-[11px] text-muted-foreground mb-1">Penghasilan/bln (Rp)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={incomeInput}
-                    onChange={(e) => setIncomeInput(parseFloat(e.target.value) || 0)}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-foreground font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-muted-foreground mb-1">Pengeluaran/bln (Rp)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={expenseInput}
-                    onChange={(e) => setExpenseInput(parseFloat(e.target.value) || 0)}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-foreground font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="block text-[11px] text-muted-foreground mb-1">Cicilan Utang/bln (Rp)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={debtInput}
-                    onChange={(e) => setDebtInput(parseFloat(e.target.value) || 0)}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-foreground font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-muted-foreground mb-1">Status Pernikahan</label>
-                  <select
-                    value={maritalInput}
-                    onChange={(e) => setMaritalInput(e.target.value as "SINGLE" | "MARRIED")}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-foreground"
-                  >
-                    <option value="SINGLE">Lajang</option>
-                    <option value="MARRIED">Menikah</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-[11px] text-muted-foreground mb-1">Tanggungan</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="15"
-                    value={dependentsInput}
-                    onChange={(e) => setDependentsInput(parseInt(e.target.value) || 0)}
-                    className="w-full px-2 py-1.5 rounded-lg bg-secondary border border-border text-foreground"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-muted-foreground mb-1">Usia</label>
-                  <input
-                    type="number"
-                    min="17"
-                    max="85"
-                    value={ageInput}
-                    onChange={(e) => setAgeInput(parseInt(e.target.value) || 28)}
-                    className="w-full px-2 py-1.5 rounded-lg bg-secondary border border-border text-foreground"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-muted-foreground mb-1">Target FIRE</label>
-                  <input
-                    type="number"
-                    min="25"
-                    max="90"
-                    value={fireAgeInput}
-                    onChange={(e) => setFireAgeInput(parseInt(e.target.value) || 50)}
-                    className="w-full px-2 py-1.5 rounded-lg bg-secondary border border-border text-foreground"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-muted-foreground mb-1">Profil Risiko Investasi</label>
-                <select
-                  value={riskInput}
-                  onChange={(e) => setRiskInput(e.target.value as "CONSERVATIVE" | "MODERATE" | "AGGRESSIVE")}
-                  className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-foreground"
-                >
-                  <option value="CONSERVATIVE">Konservatif (Utamakan Aman)</option>
-                  <option value="MODERATE">Moderat (Seimbang)</option>
-                  <option value="AGGRESSIVE">Agresif (Pertumbuhan Maksimal)</option>
-                </select>
-              </div>
-
-              <button
-                type="submit"
-                disabled={savingProfile}
-                className="w-full py-2 rounded-xl bg-primary text-primary-foreground font-bold shadow-sm"
-              >
-                {savingProfile ? "Menyimpan..." : "Simpan Profil"}
-              </button>
-            </form>
-          )}
+            <SlidersHorizontal className="w-4 h-4 shrink-0" />
+            <span>Atur Personalisasi di Profile Setting</span>
+            <ArrowRight className="w-4 h-4 shrink-0" />
+          </Link>
         </div>
 
         {/* Card 2: Live Financial Snapshot */}

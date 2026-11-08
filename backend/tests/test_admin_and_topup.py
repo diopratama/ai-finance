@@ -107,3 +107,4 @@ def test_admin_api_access_control(db_session):
     user_list = get_admin_users(admin_user=admin, db=db_session)
     assert user_list["total"] == 2
     assert len(user_list["users"]) == 2
+

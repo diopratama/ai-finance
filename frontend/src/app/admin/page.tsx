@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AppShell } from "@/components/layout/AppShell";
 import {
   Users,
   ShieldCheck,
@@ -88,24 +87,22 @@ export default function AdminDashboardPage() {
 
   if (!currentUser || currentUser.role !== "admin") {
     return (
-      <AppShell>
-        <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
-          <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-500 mb-4 shadow-lg shadow-rose-500/10">
-            <ShieldX className="w-8 h-8" />
-          </div>
-          <h1 className="text-xl font-bold text-foreground">Akses Dibatasi (Khusus Administrator)</h1>
-          <p className="text-xs text-muted-foreground max-w-md mt-2 leading-relaxed">
-            Halaman ini hanya dapat diakses oleh akun dengan wewenang <strong>Administrator</strong>. Silakan hubungi pengelola sistem jika Anda memerlukan hak akses ini.
-          </p>
-          <Link
-            href="/dashboard"
-            className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground font-bold text-xs shadow-md shadow-[#f0b000]/20 hover:bg-primary/90 transition-all"
-          >
-            <span>Kembali ke Dashboard Utama</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-500 mb-4 shadow-lg shadow-rose-500/10">
+          <ShieldX className="w-8 h-8" />
         </div>
-      </AppShell>
+        <h1 className="text-xl font-bold text-foreground">Akses Dibatasi (Khusus Administrator)</h1>
+        <p className="text-xs text-muted-foreground max-w-md mt-2 leading-relaxed">
+          Halaman ini hanya dapat diakses oleh akun dengan wewenang <strong>Administrator</strong>. Silakan hubungi pengelola sistem jika Anda memerlukan hak akses ini.
+        </p>
+        <Link
+          href="/dashboard"
+          className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground font-bold text-xs shadow-md shadow-[#f0b000]/20 hover:bg-primary/90 transition-all"
+        >
+          <span>Kembali ke Dashboard Utama</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
+      </div>
     );
   }
 
@@ -114,8 +111,7 @@ export default function AdminDashboardPage() {
     : 0;
 
   return (
-    <AppShell>
-      <div className="p-6 max-w-7xl mx-auto space-y-8">
+    <div className="p-6 max-w-7xl mx-auto space-y-8">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -375,10 +371,10 @@ export default function AdminDashboardPage() {
           )}
         </div>
       </div>
-    </AppShell>
-  );
+    );
 }
 
 function intFormat(val: number): string {
   return Math.round(val).toLocaleString("id-ID");
 }
+
