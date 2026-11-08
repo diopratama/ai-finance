@@ -119,3 +119,4 @@ async def send_verification_email(to_email: str, full_name: str, otp_code: str) 
     except Exception as exc:
         logger.error("Failed to send verification email via Resend: %s", exc)
         return False
+

@@ -117,7 +117,7 @@ def _process_user_transaction_message(
     # Apply balance update
     if tx_type == "EXPENSE":
         target_wallet.balance -= amount
-    elif tx_type == "INCOME":
+    elif tx_type in ("INCOME", "TRANSFER", "TOPUP"):
         target_wallet.balance += amount
 
     tx = Transaction(
@@ -157,8 +157,13 @@ def _process_user_transaction_message(
             "remaining_amount": round(rem_now, 2),
         }
 
-    action_label = "Pengeluaran" if tx_type == "EXPENSE" else "Pemasukan"
-    action_symbol = "💸" if tx_type == "EXPENSE" else "💰"
+    is_topup_text = any(k in raw_text.lower() for k in ("topup", "top up", "isi saldo", "isi dompet", "isi gopay", "isi ovo", "tambah saldo"))
+    if is_topup_text:
+        action_label = "Top Up / Pemasukan"
+        action_symbol = "💰"
+    else:
+        action_label = "Pengeluaran" if tx_type == "EXPENSE" else "Pemasukan"
+        action_symbol = "💸" if tx_type == "EXPENSE" else "💰"
     formatted_amount = f"Rp {int(amount):,}".replace(",", ".")
     rem_wallet_fmt = f"Rp {int(round(target_wallet.balance)):,}".replace(",", ".")
 
@@ -206,6 +211,7 @@ def simulate_chat_message(
 
 async def _send_telegram_reply(chat_id: str, reply_msg: str) -> Dict[str, Any]:
     """Sends reply directly via Telegram Bot API HTTP if token is available, and returns method payload."""
+    sent_via_api = False
     if settings.TELEGRAM_BOT_TOKEN and chat_id:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -213,10 +219,19 @@ async def _send_telegram_reply(chat_id: str, reply_msg: str) -> Dict[str, Any]:
                     f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
                     json={"chat_id": chat_id, "text": reply_msg},
                 )
-                if res.status_code != 200:
+                if res.status_code == 200:
+                    sent_via_api = True
+                else:
                     logger.warning("Telegram direct sendMessage returned %s: %s", res.status_code, res.text)
         except Exception as exc:
             logger.error("Failed to send direct telegram reply: %s", exc)
+
+    if sent_via_api:
+        # Avoid duplicate message: already delivered directly via Telegram Bot API HTTP
+        return {
+            "ok": True,
+            "reply": reply_msg,
+        }
 
     return {
         "method": "sendMessage",
@@ -289,6 +304,36 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
                 "Contoh: /pair 123456"
             )
 
+        # Check for /saldo or /dompet or natural text query "cek saldo"
+        text_lower = text.lower()
+        if text in ("/saldo", "/dompet", "/wallets") or any(
+            k in text_lower for k in ("cek saldo", "saldo saya", "lihat saldo", "total saldo", "sisa saldo", "cek dompet")
+        ):
+            user = bot_link.user
+            wallets = (
+                db.query(Wallet)
+                .filter(Wallet.user_id == user.id, Wallet.is_archived == False)
+                .order_by(Wallet.is_default.desc(), Wallet.name.asc())
+                .all()
+            )
+            if not wallets:
+                return await _send_telegram_reply(
+                    chat_id,
+                    "⚠️ Anda belum memiliki dompet aktif.\nSilakan tambahkan dompet di web dashboard: https://aifinance.fellow.my.id/wallets",
+                )
+
+            total_balance = sum(w.balance for w in wallets)
+            lines = ["💳 Saldo Dompet & Rekening Anda:\n"]
+            for w in wallets:
+                icon = "💵" if w.type == "CASH" else ("🏦" if w.type == "BANK" else ("📱" if w.type == "EWALLET" else "💳"))
+                fmt_bal = f"Rp {int(round(w.balance)):,}".replace(",", ".")
+                def_badge = " (Utama)" if w.is_default else ""
+                lines.append(f"• {icon} {w.name}{def_badge}: {fmt_bal}")
+
+            fmt_total = f"Rp {int(round(total_balance)):,}".replace(",", ".")
+            lines.append(f"\n💰 Total Saldo Tersedia: {fmt_total} ({user.base_currency or 'IDR'})")
+            return await _send_telegram_reply(chat_id, "\n".join(lines))
+
         # Check for /summary command
         if text in ("/summary", "/laporan"):
             user = bot_link.user
@@ -306,13 +351,15 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
         if text in ("/help", "/bantuan"):
             help_msg = (
                 "💡 Panduan Penggunaan AI-Finance Bot:\n\n"
-                "• Catat Pengeluaran: Cukup ketik seperti chat biasa:\n"
+                "• Catat Pengeluaran:\n"
                 "  - 'kopi susu 25rb bayar gopay'\n"
-                "  - 'beli belanja bulanan 450.000'\n"
-                "• Catat Pemasukan:\n"
-                "  - 'gaji bulan ini 15jt'\n"
-                "  - 'freelance project 2.5jt'\n"
-                "• Cek Ringkasan: Ketik /summary atau /laporan"
+                "  - 'beli belanja bulanan 450.000'\n\n"
+                "• Catat Pemasukan & Top Up:\n"
+                "  - 'topup saldo gopay 1jt'\n"
+                "  - 'gaji bulan ini 15jt masuk bca'\n\n"
+                "• Cek Saldo Dompet: Ketik /saldo atau 'cek saldo'\n"
+                "• Cek Ringkasan: Ketik /summary atau /laporan\n"
+                "• Bantuan: Ketik /help"
             )
             return await _send_telegram_reply(chat_id, help_msg)
 

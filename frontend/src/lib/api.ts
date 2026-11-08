@@ -167,6 +167,56 @@ export async function changePassword(data: {
   });
 }
 
+// ----------------- ADMIN -----------------
+export interface AdminStats {
+  total_users: number;
+  verified_users: number;
+  unverified_users: number;
+  active_users_30d: number;
+  total_transactions: number;
+  total_system_wallets: number;
+  total_system_balance: number;
+  bot_connected_users: number;
+}
+
+export interface AdminUserItem {
+  id: string;
+  full_name: string;
+  email: string;
+  role: string;
+  is_verified: boolean;
+  base_currency: string;
+  created_at: string;
+  wallet_count: number;
+  total_balance: number;
+  transaction_count: number;
+  has_bot_linked: boolean;
+}
+
+export interface AdminUsersResponse {
+  total: number;
+  page: number;
+  limit: number;
+  users: AdminUserItem[];
+}
+
+export async function getAdminStats(): Promise<AdminStats> {
+  return await apiFetch<AdminStats>("/admin/stats");
+}
+
+export async function getAdminUsers(params?: {
+  search?: string;
+  page?: number;
+  limit?: number;
+}): Promise<AdminUsersResponse> {
+  const q = new URLSearchParams();
+  if (params?.search) q.set("search", params.search);
+  if (params?.page) q.set("page", String(params.page));
+  if (params?.limit) q.set("limit", String(params.limit));
+  const qs = q.toString() ? `?${q.toString()}` : "";
+  return await apiFetch<AdminUsersResponse>(`/admin/users${qs}`);
+}
+
 // ----------------- WALLETS -----------------
 export async function getWallets(month?: string): Promise<{ total_balance: number; currency: string; month_key?: string; wallets: Wallet[] }> {
   try {

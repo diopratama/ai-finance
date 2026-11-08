@@ -14,6 +14,7 @@ from app.api.webhooks import router as webhooks_router
 from app.api.planner import router as planner_router
 from app.api.cfp import router as cfp_legacy_router
 from app.api.fire import router as fire_router
+from app.api.admin import router as admin_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("ai_finance")
@@ -55,6 +56,7 @@ app.include_router(webhooks_router, prefix="/api/v1")
 app.include_router(planner_router, prefix="/api/v1")
 app.include_router(cfp_legacy_router, prefix="/api/v1")
 app.include_router(fire_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1")
 
 
 @app.get("/")

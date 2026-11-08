@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -12,9 +13,11 @@ import {
   Flame,
   ShieldCheck,
   UserCog,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppLogo } from "@/components/AppLogo";
+import { getStoredUser, AuthUser } from "@/lib/api";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
@@ -29,6 +32,11 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    setCurrentUser(getStoredUser());
+  }, []);
 
   return (
     <aside className="w-64 bg-sidebar text-sidebar-foreground border-r border-sidebar-border hidden md:flex flex-col h-screen sticky top-0 shrink-0">
@@ -86,6 +94,32 @@ export function Sidebar() {
             </Link>
           );
         })}
+
+        {currentUser?.role === "admin" && (
+          <div className="pt-3 mt-3 border-t border-sidebar-border">
+            <div className="text-[11px] font-semibold text-rose-500 uppercase tracking-wider px-3 mb-1.5 flex items-center gap-1.5">
+              <ShieldAlert className="w-3.5 h-3.5" />
+              <span>Administrasi</span>
+            </div>
+            <Link
+              href="/admin"
+              className={cn(
+                "flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all group border",
+                pathname === "/admin"
+                  ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/35 font-semibold"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/80"
+              )}
+            >
+              <div className="flex items-center gap-3">
+                <ShieldAlert className="w-4 h-4 text-rose-500" />
+                <span>Admin Console</span>
+              </div>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 uppercase">
+                Admin
+              </span>
+            </Link>
+          </div>
+        )}
       </nav>
 
       {/* Holistic Status Card */}

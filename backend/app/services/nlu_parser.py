@@ -147,8 +147,9 @@ def parse_transaction_text(
     text_lower = raw_text.lower().strip()
 
     # Determine Type
-    is_transfer = "transfer" in text_lower or "tf " in text_lower or "pindah" in text_lower or "topup" in text_lower or "top up" in text_lower
-    is_income = any(w in text_lower for w in ["gaji", "income", "dapat uang", "bonus", "terima", "cair", "pendapatan", "transferan dari"]) and not is_transfer
+    is_topup = any(w in text_lower for w in ["topup", "top up", "isi saldo", "isi dompet", "isi gopay", "isi ovo", "tambah saldo", "isi rekening"])
+    is_transfer = ("transfer" in text_lower or "tf " in text_lower or "pindah" in text_lower) and not is_topup
+    is_income = is_topup or any(w in text_lower for w in ["gaji", "income", "dapat uang", "bonus", "terima", "cair", "pendapatan", "transferan dari"])
 
     tx_type = "TRANSFER" if is_transfer else ("INCOME" if is_income else "EXPENSE")
 
@@ -158,7 +159,9 @@ def parse_transaction_text(
 
     # Detect Category (check custom user categories first, then system keyword map)
     category_name = "Lain-lain"
-    if tx_type == "INCOME":
+    if is_topup:
+        category_name = "Gaji & Pendapatan"  # mapped to existing positive inflow category
+    elif tx_type == "INCOME":
         category_name = "Gaji & Pendapatan"
     else:
         matched_custom = None

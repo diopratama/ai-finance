@@ -121,3 +121,4 @@ def test_update_profile_and_change_password(db_session):
     )
     assert res_cp["ok"] is True
     assert verify_password("NewPassword123!", user.password_hash) is True
+

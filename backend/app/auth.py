@@ -48,3 +48,13 @@ def get_optional_user(
     except HTTPException:
         return None
 
+
+def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Akses ditolak. Fitur ini khusus untuk Administrator sistem.",
+        )
+    return current_user
+
+
