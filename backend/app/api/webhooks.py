@@ -2,6 +2,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -51,7 +52,14 @@ def _process_user_transaction_message(
     if amount <= 0:
         return {
             "success": False,
-            "message": "Nominal tidak terdeteksi. Silakan sebutkan nominal (contoh: 'kopi 25rb pake gopay' atau 'isi bensin 250rb')",
+            "message": (
+                "⚠️ Nominal transaksi tidak terdeteksi.\n\n"
+                "Contoh format yang bisa Anda kirimkan:\n"
+                "• 'kopi susu 25rb bayar gopay'\n"
+                "• 'makan siang 35.000 di warteg'\n"
+                "• 'isi bensin 100rb'\n"
+                "• 'gaji bulanan 12jt'"
+            ),
             "parsed": parsed,
         }
 
@@ -87,7 +95,7 @@ def _process_user_transaction_message(
     if not target_wallet:
         return {
             "success": False,
-            "message": "Anda belum memiliki wallet aktif. Silakan buat wallet terlebih dahulu di dashboard web.",
+            "message": "⚠️ Tidak ada dompet/wallet aktif yang ditemukan. Silakan tambahkan dompet di menu Wallets di web dashboard: https://aifinance.fellow.my.id/wallets",
         }
 
     # Match Category (prefer custom/system match or matched_budget's category)
@@ -141,7 +149,7 @@ def _process_user_transaction_message(
         rem_now = max(0.0, matched_budget.limit_amount - spent_now)
         rem_fmt = f"Rp {int(round(rem_now)):,}".replace(",", ".")
         b_label = matched_budget.name or "Pos Anggaran"
-        budget_line = f"• **Pos Anggaran:** {b_label} (Sisa bulan ini: {rem_fmt})\n"
+        budget_line = f"• Pos Anggaran: {b_label} (Sisa bulan ini: {rem_fmt})\n"
         matched_budget_payload = {
             "id": matched_budget.id,
             "name": b_label,
@@ -149,16 +157,18 @@ def _process_user_transaction_message(
             "remaining_amount": round(rem_now, 2),
         }
 
+    action_label = "Pengeluaran" if tx_type == "EXPENSE" else "Pemasukan"
     action_symbol = "💸" if tx_type == "EXPENSE" else "💰"
     formatted_amount = f"Rp {int(amount):,}".replace(",", ".")
     rem_wallet_fmt = f"Rp {int(round(target_wallet.balance)):,}".replace(",", ".")
+
     reply_msg = (
-        f"{action_symbol} **{tx_type.title()} Berhasil Dicatat!**\n"
-        f"• **Nominal:** {formatted_amount} ({parsed['currency']})\n"
-        f"• **Kategori:** {category.name if category else 'Lain-lain'}\n"
+        f"{action_symbol} {action_label} Berhasil Dicatat!\n"
+        f"• Nominal: {formatted_amount} ({parsed['currency']})\n"
+        f"• Kategori: {category.name if category else 'Lain-lain'}\n"
         f"{budget_line}"
-        f"• **Dompet:** {target_wallet.name} (Sisa Saldo: {rem_wallet_fmt})\n"
-        f"• **Deskripsi:** {parsed['description']}"
+        f"• Dompet: {target_wallet.name} (Sisa Saldo: {rem_wallet_fmt})\n"
+        f"• Deskripsi: {parsed['description']}"
     )
 
     return {
@@ -194,28 +204,42 @@ def simulate_chat_message(
     )
 
 
+async def _send_telegram_reply(chat_id: str, reply_msg: str) -> Dict[str, Any]:
+    """Sends reply directly via Telegram Bot API HTTP if token is available, and returns method payload."""
+    if settings.TELEGRAM_BOT_TOKEN and chat_id:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(
+                    f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+                    json={"chat_id": chat_id, "text": reply_msg},
+                )
+                if res.status_code != 200:
+                    logger.warning("Telegram direct sendMessage returned %s: %s", res.status_code, res.text)
+        except Exception as exc:
+            logger.error("Failed to send direct telegram reply: %s", exc)
+
+    return {
+        "method": "sendMessage",
+        "chat_id": chat_id,
+        "text": reply_msg,
+        "ok": True,
+        "reply": reply_msg,
+    }
+
+
 @router.post("/telegram")
 async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
     """Receives Telegram Bot webhook updates."""
+    chat_id = ""
     try:
         body = await request.json()
-        message = body.get("message", {})
+        message = body.get("message") or body.get("edited_message") or {}
         chat = message.get("chat", {})
         chat_id = str(chat.get("id")) if chat.get("id") is not None else ""
         text = message.get("text", "").strip()
 
         if not chat_id:
             return {"ok": True}
-
-        def _telegram_response(reply_msg: str):
-            # Telegram Webhook synchronous reply via Bot API method
-            return {
-                "method": "sendMessage",
-                "chat_id": chat_id,
-                "text": reply_msg,
-                "ok": True,
-                "reply": reply_msg,
-            }
 
         # Check for pairing command: /pair 123456
         if text.startswith("/pair"):
@@ -233,7 +257,8 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
                     bot_link.platform_username = message.get("from", {}).get("username")
                     bot_link.pairing_code = None
                     db.commit()
-                    return _telegram_response(
+                    return await _send_telegram_reply(
+                        chat_id,
                         "✅ Akun Telegram Anda berhasil dihubungkan ke AI-Finance!\n\n"
                         "Anda sekarang bisa langsung mencatat transaksi, misal:\n"
                         "• makan siang 35rb di warteg\n"
@@ -241,7 +266,10 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
                         "• gaji bulanan 10jt\n\n"
                         "Ketik /summary atau /laporan untuk cek ringkasan saldo."
                     )
-            return _telegram_response("❌ Kode pairing tidak valid atau telah kedaluwarsa. Silakan generate kode baru di web dashboard.")
+            return await _send_telegram_reply(
+                chat_id,
+                "❌ Kode pairing tidak valid atau telah kedaluwarsa. Silakan generate kode baru di web dashboard: https://aifinance.fellow.my.id/bot-pairing"
+            )
 
         # Find linked user
         bot_link = db.query(BotLink).filter(
@@ -251,7 +279,8 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
         ).first()
 
         if not bot_link:
-            return _telegram_response(
+            return await _send_telegram_reply(
+                chat_id,
                 "Halo! Selamat datang di AI-Finance Bot 🤖\n\n"
                 "Akun Telegram Anda belum terhubung. Silakan lakukan pairing terlebih dahulu:\n"
                 "1. Buka dashboard: https://aifinance.fellow.my.id/bot-pairing\n"
@@ -272,7 +301,7 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
                 f"• Total Pengeluaran: Rp {int(total_exp):,}\n"
                 f"• Saldo Bersih: Rp {int(total_inc - total_exp):,}"
             ).replace(",", ".")
-            return _telegram_response(summary_msg)
+            return await _send_telegram_reply(chat_id, summary_msg)
 
         if text in ("/help", "/bantuan"):
             help_msg = (
@@ -285,7 +314,7 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
                 "  - 'freelance project 2.5jt'\n"
                 "• Cek Ringkasan: Ketik /summary atau /laporan"
             )
-            return _telegram_response(help_msg)
+            return await _send_telegram_reply(chat_id, help_msg)
 
         # Process natural language expense
         result = _process_user_transaction_message(
@@ -295,10 +324,13 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
             receipt_meta=None,
             db=db,
         )
-        return _telegram_response(result["message"])
+        return await _send_telegram_reply(chat_id, result["message"])
 
     except Exception as e:
         logger.error("Telegram webhook error: %s", e)
+        err_msg = f"⚠️ Terjadi kesalahan saat memproses transaksi: {str(e)}"
+        if chat_id:
+            await _send_telegram_reply(chat_id, err_msg)
         return {"ok": True, "error": str(e)}
 
 
