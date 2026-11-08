@@ -1,11 +1,19 @@
 /** @type {import('next').NextConfig} */
+const buildSalt = `build-${Date.now()}`;
+
 const nextConfig = {
   reactStrictMode: true,
   eslint: {
     ignoreDuringBuilds: true,
   },
   generateBuildId: async () => {
-    return `build-${Date.now()}`;
+    return buildSalt;
+  },
+  webpack: (config) => {
+    if (config.output) {
+      config.output.hashSalt = buildSalt;
+    }
+    return config;
   },
   async redirects() {
     return [
