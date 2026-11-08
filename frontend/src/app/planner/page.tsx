@@ -215,7 +215,8 @@ export default function FinancialPlannerPage() {
   };
 
   const completenessPct = profile?.profile_completeness_pct ?? healthContext?.profile_completeness_pct ?? 20;
-  const missingHints = profile?.missing_profile_hints ?? healthContext?.missing_profile_hints ?? [];
+  const rawHints = profile?.missing_profile_hints ?? healthContext?.missing_profile_hints ?? [];
+  const missingHints: string[] = Array.isArray(rawHints) ? rawHints.filter((h): h is string => typeof h === "string") : [];
   const shariaActive = profile?.sharia_preference ?? healthContext?.sharia_preference ?? false;
 
   return (

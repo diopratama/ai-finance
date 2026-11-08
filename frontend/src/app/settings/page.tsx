@@ -82,17 +82,21 @@ export default function SettingsPage() {
 
   const loadData = async () => {
     try {
-      const p = await getUserProfile();
-      setProfile(p);
-      setFullName(p.full_name || "");
-      setEmail(p.email || "");
-      setBaseCurrency(p.base_currency || "IDR");
+      const p = await getUserProfile().catch(() => null);
+      if (p) {
+        setProfile(p);
+        setFullName(p.full_name || "");
+        setEmail(p.email || "");
+        setBaseCurrency(p.base_currency || "IDR");
+      }
 
-      const b = await getBotStatus();
-      setBotStatus(b);
+      const b = await getBotStatus().catch(() => null);
+      if (b) {
+        setBotStatus(b);
+      }
 
-      const overview = await getPlannerOverview();
-      if (overview.personal_profile) {
+      const overview = await getPlannerOverview().catch(() => null);
+      if (overview?.personal_profile) {
         const pp = overview.personal_profile;
         setPersonalProfile(pp);
         setIncomeInput(pp.monthly_income || 0);
@@ -237,7 +241,7 @@ export default function SettingsPage() {
         >
           <SlidersHorizontal className="w-3.5 h-3.5" />
           <span>Personalisasi Finansial (AI)</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-accent text-[#8a6300] dark:text-[#f0b000] border border-[#f0b000]/30 font-extrabold">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent text-[#8a6300] dark:text-[#f0b000] border border-[#f0b000]/30 font-extrabold">
             {completeness}%
           </span>
         </button>
@@ -267,11 +271,16 @@ export default function SettingsPage() {
                     Bergabung
                   </span>
                   <span className="font-medium text-foreground">
-                    {new Date(profile.created_at).toLocaleDateString("id-ID", {
-                      day: "numeric",
-                      month: "short",
-                      year: "numeric",
-                    })}
+                    {(() => {
+                      try {
+                        const d = new Date(profile.created_at);
+                        return isNaN(d.getTime())
+                          ? "-"
+                          : d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+                      } catch {
+                        return "-";
+                      }
+                    })()}
                   </span>
                 </div>
               )}
@@ -298,24 +307,24 @@ export default function SettingsPage() {
                   <span className="text-muted-foreground">Telegram</span>
                   <span
                     className={`font-semibold ${
-                      botStatus.TELEGRAM.connected
+                      botStatus?.TELEGRAM?.connected
                         ? "text-emerald-600 dark:text-emerald-400"
                         : "text-muted-foreground"
                     }`}
                   >
-                    {botStatus.TELEGRAM.connected ? "Terhubung ✅" : "Belum Terhubung"}
+                    {botStatus?.TELEGRAM?.connected ? "Terhubung ✅" : "Belum Terhubung"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between p-2 rounded-lg bg-card border border-border">
                   <span className="text-muted-foreground">WhatsApp</span>
                   <span
                     className={`font-semibold ${
-                      botStatus.WHATSAPP.connected
+                      botStatus?.WHATSAPP?.connected
                         ? "text-emerald-600 dark:text-emerald-400"
                         : "text-muted-foreground"
                     }`}
                   >
-                    {botStatus.WHATSAPP.connected ? "Terhubung ✅" : "Belum Terhubung"}
+                    {botStatus?.WHATSAPP?.connected ? "Terhubung ✅" : "Belum Terhubung"}
                   </span>
                 </div>
               </div>

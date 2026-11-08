@@ -4,6 +4,9 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  generateBuildId: async () => {
+    return `build-${Date.now()}`;
+  },
   async redirects() {
     return [
       {
