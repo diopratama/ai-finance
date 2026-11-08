@@ -1,5 +1,6 @@
 "use client";
 
+// Build version timestamp: 20261108-223500
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Sidebar } from "./Sidebar";

@@ -1,3 +1,4 @@
+// Build version timestamp: 20261108-223500
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
