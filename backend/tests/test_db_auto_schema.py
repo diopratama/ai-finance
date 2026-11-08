@@ -1,13 +1,23 @@
 import os
 import pytest
-from sqlalchemy import inspect, create_engine, text
-from app.db import Base, init_db, _ensure_schema_columns, DEFAULT_CATEGORIES, SessionLocal, User, Category, Wallet
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import sessionmaker
+
+import app.db as app_db
+from app.db import Base, DEFAULT_CATEGORIES, User, Category, Wallet
 
 
-def test_db_auto_schema_creation(tmp_path):
+def test_db_auto_schema_creation(tmp_path, monkeypatch):
     """Verifies that all tables and default seeds are automatically created."""
-    init_db()
-    db = SessionLocal()
+    db_file = tmp_path / "test_schema.db"
+    test_engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
+    test_session = sessionmaker(bind=test_engine, autoflush=False, autocommit=False)
+
+    monkeypatch.setattr(app_db, "engine", test_engine)
+    monkeypatch.setattr(app_db, "SessionLocal", test_session)
+
+    app_db.init_db()
+    db = test_session()
     try:
         # Check system categories are populated
         system_cats = db.query(Category).filter(Category.is_system == True).all()
@@ -25,7 +35,15 @@ def test_db_auto_schema_creation(tmp_path):
         db.close()
 
 
-def test_dynamic_column_addition():
+def test_dynamic_column_addition(tmp_path, monkeypatch):
     """Verifies dynamic column self-healing check runs without errors."""
-    _ensure_schema_columns()
+    db_file = tmp_path / "test_migration.db"
+    test_engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
+    test_session = sessionmaker(bind=test_engine, autoflush=False, autocommit=False)
+
+    monkeypatch.setattr(app_db, "engine", test_engine)
+    monkeypatch.setattr(app_db, "SessionLocal", test_session)
+
+    Base.metadata.create_all(bind=test_engine)
+    app_db._ensure_schema_columns()
 

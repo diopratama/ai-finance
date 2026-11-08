@@ -44,6 +44,9 @@ jobs:
           pip install flake8 pytest
 
       - name: Run Unit Tests
+        env:
+          DATABASE_URL: "sqlite:///./ci_test.db"
+          SECRET_KEY: "ci-secret-key-1234567890"
         run: |
           cd backend
           PYTHONPATH=. pytest tests -q
