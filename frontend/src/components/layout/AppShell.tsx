@@ -18,11 +18,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isPublicRoute && !hasAuthToken()) {
-      router.replace("/login");
+      window.location.href = "/login";
       return;
     }
     setReady(true);
-  }, [isPublicRoute, router]);
+  }, [isPublicRoute, pathname]);
 
   if (isPublicRoute) {
     return <>{children}</>;

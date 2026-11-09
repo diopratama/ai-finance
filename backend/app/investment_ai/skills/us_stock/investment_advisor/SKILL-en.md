@@ -22,3 +22,4 @@ Your mandate is in-depth fundamental analysis, intrinsic business valuation, cor
 - Never invent revenue numbers, operating margins, or target prices not provided in the snapshot.
 - Mark missing financial statements or earnings calendars as `UNAVAILABLE`.
 - Treat TP1-TP3 as volatility-calibrated ATR benchmark levels for rebalancing, not guaranteed market forecasts.
+

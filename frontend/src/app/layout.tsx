@@ -10,7 +10,7 @@ export const metadata: Metadata = {
     "Platform manajemen kekayaan, alokasi anggaran gajian terhubung dompet, chatbot pencatat WhatsApp/Telegram, dan AI Financial Planner adaptif.",
 };
 
-const themeInitScript = `(function(){try{var t=localStorage.getItem("theme");var d=t==="dark"||(!t&&window.matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d);}catch(e){document.documentElement.classList.add("dark");}})();`;
+const themeInitScript = `(function(){try{var t=localStorage.getItem("theme");var d=t==="dark"||(!t&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(d){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark";}else{document.documentElement.classList.remove("dark");document.documentElement.style.colorScheme="light";}}catch(e){document.documentElement.classList.add("dark");}})();`;
 
 export default function RootLayout({
   children,

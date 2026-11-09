@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Lock, Mail, User as UserIcon, ArrowRight, ArrowLeft, KeyRound, RefreshCw, CheckCircle2 } from "lucide-react";
-import { hasAuthToken, loginUser, registerUser, verifyEmail, resendVerification } from "@/lib/api";
+import { hasAuthToken, loginUser, registerUser, verifyEmail, resendVerification, apiFetch } from "@/lib/api";
 import { AppLogo } from "@/components/AppLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
@@ -23,7 +23,18 @@ export function AuthScreen({ defaultMode = "login" }: { defaultMode?: "login" | 
 
   useEffect(() => {
     if (hasAuthToken()) {
-      router.replace("/dashboard");
+      // Validate existing session token against backend /auth/me
+      apiFetch("/auth/me")
+        .then(() => {
+          window.location.href = "/dashboard";
+        })
+        .catch(() => {
+          // Token is stale or invalid: clear it so user can freely enter credentials
+          if (typeof window !== "undefined") {
+            localStorage.removeItem("ai_finance_token");
+            localStorage.removeItem("ai_finance_user");
+          }
+        });
       return;
     }
     if (typeof window !== "undefined") {
@@ -33,7 +44,7 @@ export function AuthScreen({ defaultMode = "login" }: { defaultMode?: "login" | 
         setMode(qMode);
       }
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     if (resendCooldown > 0) {
@@ -51,7 +62,7 @@ export function AuthScreen({ defaultMode = "login" }: { defaultMode?: "login" | 
     try {
       if (mode === "login") {
         await loginUser(email, password);
-        router.replace("/dashboard");
+        window.location.href = "/dashboard";
       } else if (mode === "register") {
         if (!fullName.trim() || fullName.trim().length < 2) {
           throw new Error("Nama lengkap wajib diisi minimal 2 karakter.");
@@ -70,7 +81,7 @@ export function AuthScreen({ defaultMode = "login" }: { defaultMode?: "login" | 
           throw new Error("Silakan masukkan 6 digit kode verifikasi.");
         }
         await verifyEmail(email, otpCode.trim());
-        router.replace("/dashboard");
+        window.location.href = "/dashboard";
       }
     } catch (err: any) {
       const msg = err?.message || "Terjadi kesalahan. Silakan coba beberapa saat lagi.";

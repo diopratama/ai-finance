@@ -321,6 +321,7 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
 
 
 @router.get("/health-score")
+@router.get("/overview")
 def get_health_score(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return build_planner_overview(current_user, db)
 

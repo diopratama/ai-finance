@@ -7,15 +7,16 @@ function getBackendBase(): string {
   return (
     process.env.BACKEND_INTERNAL_URL ||
     process.env.NEXT_PUBLIC_API_URL ||
-    "http://backend:8000"
+    (process.env.NODE_ENV === "production" ? "http://backend:8000" : "http://127.0.0.1:8001")
   ).replace(/\/+$/, "");
 }
 
 async function proxyRequest(
   request: NextRequest,
-  context: { params: { path: string[] } }
+  context: { params: { path: string[] } } | { params: Promise<{ path: string[] }> }
 ): Promise<Response> {
-  const pathSegments = context.params?.path || [];
+  const resolvedParams = await Promise.resolve(context.params);
+  const pathSegments = resolvedParams?.path || [];
   const targetUrl = `${getBackendBase()}/api/v1/${pathSegments.join("/")}${request.nextUrl.search}`;
 
   const upstreamHeaders = new Headers();

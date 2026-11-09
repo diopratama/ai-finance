@@ -12,12 +12,19 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={toggle}
-      title={isDark ? "Ganti ke mode terang" : "Ganti ke mode gelap"}
+      title={isDark ? "Ganti ke mode terang (Light Mode)" : "Ganti ke mode gelap (Dark Mode)"}
       aria-label={isDark ? "Ganti ke mode terang" : "Ganti ke mode gelap"}
-      className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border border-transparent hover:border-border"
+      className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border border-transparent hover:border-border cursor-pointer select-none"
     >
-      {mounted ? isDark ? <Sun className="h-4 w-4 text-[#f0b000]" /> : <Moon className="h-4 w-4 text-[#8a6300]" /> : <Sun className="h-4 w-4" />}
+      {mounted ? (
+        isDark ? (
+          <Sun className="h-4 w-4 text-[#f0b000]" />
+        ) : (
+          <Moon className="h-4 w-4 text-[#8a6300]" />
+        )
+      ) : (
+        <Sun className="h-4 w-4 opacity-70" />
+      )}
     </button>
   );
 }
-
