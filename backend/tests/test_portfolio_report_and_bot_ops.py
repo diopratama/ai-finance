@@ -285,3 +285,4 @@ def test_account_backup_reset_and_restore_with_password():
 
     restored_wallets = db.query(Wallet).filter(Wallet.user_id == user.id).all()
     assert sum(w.balance for w in restored_wallets) == 40_000_000.0
+
