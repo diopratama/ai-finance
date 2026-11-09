@@ -39,6 +39,10 @@ export interface MarketRates {
   usd_to_idr?: number;
   gold_idr_per_gram: number;
   gold_per_gram_idr?: number;
+  gold_antam_idr?: number;
+  gold_buyback_idr?: number;
+  gold_spot_idr?: number;
+  gold_xau_usd?: number;
   updated_at: string;
   source: string;
 }

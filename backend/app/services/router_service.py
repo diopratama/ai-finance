@@ -155,11 +155,11 @@ class RouterService:
         web_search_context = ""
         if should_search_internet(latest_user_msg):
             try:
-                results = search_internet(latest_user_msg, max_results=3)
-                if results:
-                    web_search_context = format_search_results_for_prompt(results)
+                results = search_internet(latest_user_msg, max_results=4)
+                web_search_context = format_search_results_for_prompt(results)
             except Exception as e:
                 logger.debug("Live web search notice: %s", e)
+                web_search_context = format_search_results_for_prompt([])
 
         system_instruction = build_planner_system_prompt(
             financial_context,

@@ -387,16 +387,20 @@ export default function WalletsPage() {
             <span>Kurs &amp; Emas Terkini:</span>
           </span>
           <span className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
-            <span>🪙 Emas Antam/Spot:</span>
-            <span>{formatCurrency(marketRates?.gold_idr_per_gram || 1540000)}/gr</span>
+            <span>🪙 Emas Antam 1g:</span>
+            <span>{formatCurrency(marketRates?.gold_antam_idr || marketRates?.gold_idr_per_gram || 2539000)}/gr</span>
+          </span>
+          <span className="px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-bold flex items-center gap-1">
+            <span>🔄 Buyback:</span>
+            <span>{formatCurrency(marketRates?.gold_buyback_idr || 2373000)}/gr</span>
           </span>
           <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
             <span>💵 USD/IDR:</span>
-            <span>{formatCurrency(marketRates?.usd_idr || 16250)}</span>
+            <span>{formatCurrency(marketRates?.usd_idr || 16850)}</span>
           </span>
         </div>
         <span className="text-[11px] text-muted-foreground">
-          Konversi live otomatis ke total saldo Rupiah &bull; Update berkala
+          Sumber: {marketRates?.source || "IndoGold Antam & OpenFX"} &bull; Konversi live otomatis ke Rupiah
         </span>
       </div>
 
@@ -911,14 +915,14 @@ export default function WalletsPage() {
                   />
                   {currency === "GRAM" && (
                     <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 font-semibold space-y-0.5">
-                      <div>🪙 Kurs Emas Live: ~{formatCurrency(marketRates?.gold_idr_per_gram || 1540000)}/gram</div>
-                      <div>≈ Setara: {formatCurrency((parseFloat(balance) || 0) * (marketRates?.gold_idr_per_gram || 1540000))}</div>
+                      <div>🪙 Harga Emas Antam Live: ~{formatCurrency(marketRates?.gold_idr_per_gram || 2539000)}/gram</div>
+                      <div>≈ Setara: {formatCurrency((parseFloat(balance) || 0) * (marketRates?.gold_idr_per_gram || 2539000))}</div>
                     </div>
                   )}
                   {currency === "USD" && (
                     <div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 font-semibold space-y-0.5">
-                      <div>💵 Kurs USD Live: ~{formatCurrency(marketRates?.usd_idr || 16250)}/$</div>
-                      <div>≈ Setara: {formatCurrency((parseFloat(balance) || 0) * (marketRates?.usd_idr || 16250))}</div>
+                      <div>💵 Kurs USD Live: ~{formatCurrency(marketRates?.usd_idr || 16850)}/$</div>
+                      <div>≈ Setara: {formatCurrency((parseFloat(balance) || 0) * (marketRates?.usd_idr || 16850))}</div>
                     </div>
                   )}
                 </div>

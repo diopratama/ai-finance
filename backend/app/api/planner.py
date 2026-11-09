@@ -26,6 +26,11 @@ from app.services.fire_engine import (
     evaluate_investment_portfolio,
     get_asset_allocation_recommendation,
 )
+from app.services.market_rates_service import (
+    convert_to_idr,
+    fetch_live_market_rates,
+    format_currency_display_string,
+)
 from app.services.planner_skills_loader import (
     calculate_profile_completeness,
     extract_and_update_profile_memory,
@@ -104,15 +109,20 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
     profile = _ensure_profile(user, db)
     confirmed = get_confirmed_fields_set(profile)
 
+    live_rates = fetch_live_market_rates()
+
     wallets = db.query(Wallet).filter(Wallet.user_id == user.id, Wallet.is_archived == False).all()
-    total_wallet_balance = sum(w.balance for w in wallets)
+    total_wallet_balance = sum(convert_to_idr(w.balance, w.currency, live_rates) for w in wallets)
     liquid_balance = sum(
-        w.balance
+        convert_to_idr(w.balance, w.currency, live_rates)
         for w in wallets
-        if w.balance > 0 and not _is_credit_wallet_type(w.type) and not _is_illiquid_investment_type(w.type)
+        if w.balance > 0
+        and not _is_credit_wallet_type(w.type)
+        and not _is_illiquid_investment_type(w.type)
+        and (w.currency or "IDR").upper() != "GRAM"
     )
     credit_debt_balance = sum(
-        abs(w.balance)
+        abs(convert_to_idr(w.balance, w.currency, live_rates))
         for w in wallets
         if _is_credit_wallet_type(w.type) and w.balance < 0
     )
@@ -161,9 +171,20 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
     budget_alerts_text = "\n".join(budget_lines) if budget_lines else "  • Belum ada batas anggaran bulanan yang diatur"
 
     wallets_breakdown_text = (
-        "\n".join(f"  • {w.name} ({w.type}): {_fmt_idr(w.balance)}" for w in wallets)
+        "\n".join(
+            f"  • {w.name} ({w.type}, {w.currency or 'IDR'}): {format_currency_display_string(w.balance, w.currency)}"
+            for w in wallets
+        )
         if wallets
         else "  • Belum ada dompet aktif"
+    )
+
+    live_market_rates_text = (
+        f"  • Harga Beli Emas Antam (1 Gram Ritel Indonesia): {_fmt_idr(live_rates.get('gold_antam_idr', live_rates['gold_idr_per_gram']))} / gram\n"
+        f"  • Harga Jual Kembali / Buyback Emas Antam: {_fmt_idr(live_rates.get('gold_buyback_idr', 2373000))} / gram\n"
+        f"  • Harga Emas Spot Dunia (XAU): ${live_rates.get('gold_xau_usd', 4110):,.2f} / troy oz (≈ {_fmt_idr(live_rates.get('gold_spot_idr', 2390000))} / gram)\n"
+        f"  • Kurs Nilai Tukar USD/IDR: {_fmt_idr(live_rates['usd_idr'])} per $1 USD\n"
+        f"  • Sumber Data Live: {live_rates.get('source', 'Live Market API')}"
     )
 
     completeness = calculate_profile_completeness(profile, tx_income=tx_income, tx_expense=tx_expense)
@@ -250,6 +271,7 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
         "missing_profile_hints": completeness["missing_profile_hints"],
         # Prompt-only rich detail fields
         "wallets_breakdown_text": wallets_breakdown_text,
+        "live_market_rates_text": live_market_rates_text,
         "category_spending_text": category_spending_text,
         "budget_alerts_text": budget_alerts_text,
         "memory_notes_text": memory_notes_text,

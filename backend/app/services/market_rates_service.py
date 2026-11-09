@@ -1,21 +1,39 @@
 import logging
+import re
 import time
 from typing import Dict, Any, Optional
 import httpx
 
 logger = logging.getLogger(__name__)
 
-# Fallback default constants if network or external providers are unavailable
-DEFAULT_USD_IDR: float = 16250.0
-DEFAULT_GOLD_IDR_PER_GRAM: float = 1495000.0
+# Fallback default constants (reflecting current realistic market baseline)
+DEFAULT_USD_IDR: float = 16850.0
+DEFAULT_GOLD_IDR_PER_GRAM: float = 2539000.0
+DEFAULT_GOLD_BUYBACK_IDR: float = 2373000.0
+DEFAULT_GOLD_SPOT_IDR: float = 2390000.0
+DEFAULT_GOLD_XAU_USD: float = 4110.0
+TROY_OUNCE_GRAMS: float = 31.1034768
 CACHE_TTL_SECONDS: int = 1200  # 20 minutes
 
 # In-memory rate cache
 _rates_cache: Dict[str, Any] = {
     "usd_idr": DEFAULT_USD_IDR,
     "gold_idr_per_gram": DEFAULT_GOLD_IDR_PER_GRAM,
+    "gold_antam_idr": DEFAULT_GOLD_IDR_PER_GRAM,
+    "gold_buyback_idr": DEFAULT_GOLD_BUYBACK_IDR,
+    "gold_spot_idr": DEFAULT_GOLD_SPOT_IDR,
+    "gold_xau_usd": DEFAULT_GOLD_XAU_USD,
     "last_updated": 0.0,
     "source": "FALLBACK_INITIAL",
+}
+
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
 
@@ -23,84 +41,196 @@ def _is_cache_fresh() -> bool:
     return (time.time() - _rates_cache.get("last_updated", 0.0)) < CACHE_TTL_SECONDS
 
 
+def _parse_idr_digits(raw: str) -> Optional[float]:
+    cleaned = re.sub(r"[^\d]", "", raw or "")
+    if not cleaned:
+        return None
+    val = float(cleaned)
+    if 1_000_000 <= val <= 10_000_000:
+        return val
+    return None
+
+
+def _fetch_antam_retail_prices(client: httpx.Client) -> Dict[str, Any]:
+    """
+    Scrapes live Indonesian Antam 1-gram retail buy & buyback prices from
+    trusted Indonesian bullion portals (IndoGold & Aneka Logam).
+    """
+    result: Dict[str, Any] = {}
+
+    # Source A: IndoGold (Harga Emas Hari Ini - Antam 1 gram)
+    try:
+        res = client.get("https://www.indogold.id/harga-emas-hari-ini", headers=_BROWSER_HEADERS)
+        if res.status_code == 200:
+            html_text = res.text
+            # Meta description pattern:
+            # "Harga Beli Rp 2.539.000/gram, Harga Jual/Buyback Rp 2.373.000/gram"
+            m = re.search(
+                r"Harga\s+Beli\s+Rp\s*([\d.]+)\s*/\s*gram.*?Buyback\s+Rp\s*([\d.]+)\s*/\s*gram",
+                html_text,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if m:
+                buy = _parse_idr_digits(m.group(1))
+                buyback = _parse_idr_digits(m.group(2))
+                if buy:
+                    result["gold_antam_idr"] = buy
+                    result["source_antam"] = "IndoGold Antam"
+                if buyback:
+                    result["gold_buyback_idr"] = buyback
+    except Exception as e:
+        logger.debug("IndoGold Antam fetch notice: %s", e)
+
+    # Source B: Aneka Logam (if IndoGold didn't return both buy and buyback)
+    if "gold_antam_idr" not in result:
+        try:
+            res = client.get("https://anekalogam.co.id/id", headers=_BROWSER_HEADERS)
+            if res.status_code == 200:
+                html_text = res.text
+                # Look for 1gram price or Harga Jual / Harga Beli
+                m_1g = re.search(r"1\s*gram\s*Rp\s*([\d.]+)", html_text, re.IGNORECASE)
+                m_buyback = re.search(r"Harga\s+Beli\s*Rp\s*([\d.]+)", html_text, re.IGNORECASE)
+                if m_1g:
+                    buy = _parse_idr_digits(m_1g.group(1))
+                    if buy:
+                        result["gold_antam_idr"] = buy
+                        result["source_antam"] = "AnekaLogam Antam"
+                if m_buyback and "gold_buyback_idr" not in result:
+                    bb = _parse_idr_digits(m_buyback.group(1))
+                    if bb:
+                        result["gold_buyback_idr"] = bb
+        except Exception as e:
+            logger.debug("AnekaLogam Antam fetch notice: %s", e)
+
+    return result
+
+
+def _build_rates_response(cache_data: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "usd_idr": cache_data["usd_idr"],
+        "usd_to_idr": cache_data["usd_idr"],
+        "gold_idr_per_gram": cache_data["gold_idr_per_gram"],
+        "gold_per_gram_idr": cache_data["gold_idr_per_gram"],
+        "gold_antam_idr": cache_data["gold_antam_idr"],
+        "gold_buyback_idr": cache_data["gold_buyback_idr"],
+        "gold_spot_idr": cache_data["gold_spot_idr"],
+        "gold_xau_usd": cache_data["gold_xau_usd"],
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cache_data["last_updated"])),
+        "source": cache_data["source"],
+    }
+
+
 def fetch_live_market_rates(force_refresh: bool = False) -> Dict[str, Any]:
     """
-    Fetches real-time USD/IDR exchange rate and Gold Price (IDR/gram).
-    Uses in-memory cache to stay fast and avoid external API rate limits.
+    Fetches real-time USD/IDR exchange rate, Indonesian Antam Gold Price (IDR/gram),
+    Buyback price, and Global Spot Gold (XAU/USD & IDR/gram).
+    Uses in-memory cache (20m TTL) to stay fast and avoid external rate limits.
     """
     global _rates_cache
 
     if not force_refresh and _is_cache_fresh():
-        return {
-            "usd_idr": _rates_cache["usd_idr"],
-            "usd_to_idr": _rates_cache["usd_idr"],
-            "gold_idr_per_gram": _rates_cache["gold_idr_per_gram"],
-            "gold_per_gram_idr": _rates_cache["gold_idr_per_gram"],
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(_rates_cache["last_updated"])),
-            "source": _rates_cache["source"],
-        }
+        return _build_rates_response(_rates_cache)
 
-    usd_rate = _rates_cache["usd_idr"] or DEFAULT_USD_IDR
-    gold_price = _rates_cache["gold_idr_per_gram"] or DEFAULT_GOLD_IDR_PER_GRAM
+    usd_rate = _rates_cache.get("usd_idr") or DEFAULT_USD_IDR
+    gold_antam = _rates_cache.get("gold_antam_idr") or DEFAULT_GOLD_IDR_PER_GRAM
+    gold_buyback = _rates_cache.get("gold_buyback_idr") or DEFAULT_GOLD_BUYBACK_IDR
+    gold_spot_idr = _rates_cache.get("gold_spot_idr") or DEFAULT_GOLD_SPOT_IDR
+    gold_xau_usd = _rates_cache.get("gold_xau_usd") or DEFAULT_GOLD_XAU_USD
     fetched_sources = []
 
-    # 1. Fetch USD/IDR from free exchange rate providers
-    fx_endpoints = [
-        "https://open.er-api.com/v6/latest/USD",
-        "https://api.exchangerate-api.com/v4/latest/USD",
-    ]
-    for url in fx_endpoints:
-        try:
-            with httpx.Client(timeout=4.0) as client:
+    with httpx.Client(timeout=4.5, follow_redirects=True) as client:
+        # 1. Fetch USD/IDR from reliable FX APIs
+        fx_endpoints = [
+            "https://open.er-api.com/v6/latest/USD",
+            "https://api.exchangerate-api.com/v4/latest/USD",
+        ]
+        fx_fetched = False
+        for url in fx_endpoints:
+            try:
                 res = client.get(url)
                 if res.status_code == 200:
                     data = res.json()
-                    rates = data.get("rates", {})
-                    idr = rates.get("IDR")
+                    idr = data.get("rates", {}).get("IDR")
                     if idr and isinstance(idr, (int, float)) and 10000 <= idr <= 30000:
-                        usd_rate = float(idr)
+                        usd_rate = round(float(idr), 2)
                         fetched_sources.append("open.er-api (USD/IDR)")
+                        fx_fetched = True
                         break
-        except Exception as e:
-            logger.debug("FX rate fetch failed on %s: %s", url, e)
+            except Exception as e:
+                logger.debug("FX rate fetch failed on %s: %s", url, e)
 
-    # 2. Fetch or compute Gold Price per gram in IDR
-    # Spot gold XAU/USD: 1 troy ounce = 31.1034768 grams
-    try:
-        with httpx.Client(timeout=4.0) as client:
-            res = client.get("https://open.er-api.com/v6/latest/XAU")
+        if not fx_fetched:
+            try:
+                res = client.get("https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json")
+                if res.status_code == 200:
+                    idr = res.json().get("usd", {}).get("idr")
+                    if idr and 10000 <= float(idr) <= 30000:
+                        usd_rate = round(float(idr), 2)
+                        fetched_sources.append("currency-api (USD/IDR)")
+            except Exception as e:
+                logger.debug("Fallback FX rate fetch failed: %s", e)
+
+        # 2. Fetch Global Spot Gold (XAU/USD & XAU/IDR)
+        spot_fetched = False
+        try:
+            res = client.get("https://api.gold-api.com/price/XAU")
             if res.status_code == 200:
                 data = res.json()
-                xau_idr = data.get("rates", {}).get("IDR")
-                if xau_idr and isinstance(xau_idr, (int, float)) and xau_idr > 0:
-                    gold_price = round(float(xau_idr) / 31.1034768, 2)
-                    fetched_sources.append("open.er-api (XAU/IDR)")
-                else:
-                    xau_usd = data.get("rates", {}).get("USD")
-                    if xau_usd and isinstance(xau_usd, (int, float)) and xau_usd > 0:
-                        # 1 USD in XAU -> XAU/USD price is 1 / xau_usd
-                        gold_price_usd_per_oz = 1.0 / float(xau_usd)
-                        gold_price = round((gold_price_usd_per_oz / 31.1034768) * usd_rate, 2)
-                        fetched_sources.append("open.er-api (XAU/USD)")
-    except Exception as e:
-        logger.debug("Gold rate fetch notice: %s", e)
+                price_oz = data.get("price")
+                if price_oz and isinstance(price_oz, (int, float)) and price_oz > 1000:
+                    gold_xau_usd = round(float(price_oz), 2)
+                    gold_spot_idr = round((gold_xau_usd * usd_rate) / TROY_OUNCE_GRAMS, 2)
+                    fetched_sources.append("gold-api (Spot XAU)")
+                    spot_fetched = True
+        except Exception as e:
+            logger.debug("gold-api fetch notice: %s", e)
 
+        if not spot_fetched:
+            try:
+                res = client.get("https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/xau.json")
+                if res.status_code == 200:
+                    xau_data = res.json().get("xau", {})
+                    xau_idr = xau_data.get("idr")
+                    xau_usd = xau_data.get("usd")
+                    if xau_usd and float(xau_usd) > 1000:
+                        gold_xau_usd = round(float(xau_usd), 2)
+                    if xau_idr and float(xau_idr) > 30_000_000:
+                        gold_spot_idr = round(float(xau_idr) / TROY_OUNCE_GRAMS, 2)
+                        fetched_sources.append("currency-api (Spot XAU)")
+                        spot_fetched = True
+            except Exception as e:
+                logger.debug("currency-api XAU fetch notice: %s", e)
+
+        # 3. Fetch Indonesian Retail Antam 1-gram Buy & Buyback price
+        antam_info = _fetch_antam_retail_prices(client)
+        if "gold_antam_idr" in antam_info:
+            gold_antam = antam_info["gold_antam_idr"]
+            fetched_sources.append(antam_info.get("source_antam", "Antam Retail"))
+            if "gold_buyback_idr" in antam_info:
+                gold_buyback = antam_info["gold_buyback_idr"]
+            else:
+                gold_buyback = round(gold_antam * 0.935, -3)
+        elif spot_fetched:
+            # If retail scraping is unreachable, estimate Indonesian retail 1g Antam from Spot (~6.2% minting/retail spread)
+            gold_antam = round(gold_spot_idr * 1.062, -3)
+            gold_buyback = round(gold_spot_idr * 0.992, -3)
+
+    # Primary gold_idr_per_gram uses official Indonesian Antam 1g price
+    gold_price = gold_antam
     source_label = ", ".join(fetched_sources) if fetched_sources else "CACHE_FALLBACK"
+
     _rates_cache = {
         "usd_idr": usd_rate,
         "gold_idr_per_gram": gold_price,
+        "gold_antam_idr": gold_antam,
+        "gold_buyback_idr": gold_buyback,
+        "gold_spot_idr": gold_spot_idr,
+        "gold_xau_usd": gold_xau_usd,
         "last_updated": time.time(),
         "source": source_label,
     }
 
-    return {
-        "usd_idr": usd_rate,
-        "usd_to_idr": usd_rate,
-        "gold_idr_per_gram": gold_price,
-        "gold_per_gram_idr": gold_price,
-        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(_rates_cache["last_updated"])),
-        "source": source_label,
-    }
+    return _build_rates_response(_rates_cache)
 
 
 def get_usd_to_idr_rate() -> float:
@@ -151,8 +281,6 @@ def format_currency_with_base(
 ) -> Dict[str, Any]:
     """
     Returns native string and IDR base converted string.
-    e.g. 10.5 GRAM -> native: '10.50 gram', base_idr: 15697500.0, formatted_idr: 'Rp 15.697.500'
-         $150 USD  -> native: '$150.00', base_idr: 2437500.0, formatted_idr: 'Rp 2.437.500'
     """
     unit = normalize_currency_unit(currency_or_unit)
     idr_val = convert_to_idr(amount, unit, rates)
@@ -178,7 +306,6 @@ def format_currency_with_base(
 
 
 def format_currency_display_string(amount: float, currency_or_unit: Optional[str] = "IDR") -> str:
-    """Returns a single user-friendly string e.g. '2.5 gram (≈ Rp 3.737.500)' or '$50.00 (≈ Rp 812.500)'."""
+    """Returns a single user-friendly string e.g. '2.50 gram (≈ Rp 6.347.500)' or '$50.00 (≈ Rp 842.500)'."""
     info = format_currency_with_base(amount, currency_or_unit)
     return info["display"]
-

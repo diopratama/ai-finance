@@ -5,17 +5,25 @@ from app.services.market_rates_service import (
     format_currency_with_base,
     normalize_currency_unit,
 )
-from app.services.web_search_service import should_search_internet, format_search_results_for_prompt
+from app.services.web_search_service import (
+    should_search_internet,
+    search_internet,
+    format_search_results_for_prompt,
+)
+from app.services.planner_skills_loader import build_planner_system_prompt, route_planner_skills
 from app.services.nlu_parser import parse_indonesian_amount, parse_transaction_text
-from app.db import User, Wallet, BotLink
 
 
 def test_market_rates_service_live_and_fallback():
-    rates = fetch_live_market_rates()
+    rates = fetch_live_market_rates(force_refresh=True)
     assert "usd_to_idr" in rates
     assert "gold_per_gram_idr" in rates
+    assert "gold_antam_idr" in rates
+    assert "gold_buyback_idr" in rates
+    assert "gold_spot_idr" in rates
     assert rates["usd_to_idr"] > 10000
-    assert rates["gold_per_gram_idr"] > 1000000
+    assert rates["gold_per_gram_idr"] > 2000000
+    assert rates["gold_buyback_idr"] > 1800000
 
     # Conversions
     assert convert_to_idr(100000, "IDR") == 100000.0
@@ -23,7 +31,7 @@ def test_market_rates_service_live_and_fallback():
     assert usd_idr > 100000
 
     gold_idr = convert_to_idr(2.5, "GRAM")
-    assert gold_idr > 2000000
+    assert gold_idr > 5000000
 
     # Formatting
     fmt_usd = format_currency_with_base(50, "USD")
@@ -72,10 +80,16 @@ def test_nlu_parser_gold_and_usd():
     assert parsed["currency"] == "GRAM"
 
 
-def test_format_search_results():
+def test_format_search_results_and_system_prompt():
     sample = [
-        {"title": "Harga Emas Hari Ini", "snippet": "Harga emas Antam tembus Rp 1.540.000 per gram.", "url": "https://example.com/gold"},
+        {"title": "Harga Emas Hari Ini", "snippet": "Harga emas Antam hari ini Rp 2.539.000 per gram.", "url": "https://indogold.id"},
     ]
     txt = format_search_results_for_prompt(sample)
     assert "Harga Emas Hari Ini" in txt
-    assert "1.540.000" in txt
+    assert "Harga Beli Emas Antam" in txt
+    assert "Nilai Tukar Kurs Dollar (USD/IDR)" in txt
+
+    routing = route_planner_skills("Berapa harga emas antam dan kurs dollar hari ini?", [])
+    prompt = build_planner_system_prompt({}, routing, web_search_context=txt)
+    assert "Kurs & Harga Komoditas Pasar Terkini" in prompt
+    assert "DATA TERKINI DARI INTERNET" in prompt

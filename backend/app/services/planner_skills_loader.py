@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from app.services.market_rates_service import fetch_live_market_rates
+
 logger = logging.getLogger(__name__)
 
 # Resolve skills/planner directory for both Docker (/app/skills/planner) and local dev
@@ -343,6 +345,16 @@ def build_planner_system_prompt(
     joined_skills = "\n\n---\n\n".join(skill_sections)
 
     wallets_lines = financial_context.get("wallets_breakdown_text", "- Belum ada dompet tercatat")
+    live_rates_lines = financial_context.get("live_market_rates_text")
+    if not live_rates_lines:
+        rates = fetch_live_market_rates()
+        fmt_rp = lambda v: f"Rp {int(round(v)):,}".replace(",", ".")
+        live_rates_lines = (
+            f"  • Harga Beli Emas Antam (1 Gram Ritel Indonesia): {fmt_rp(rates.get('gold_antam_idr', rates['gold_idr_per_gram']))} / gram\n"
+            f"  • Harga Jual Kembali / Buyback Emas Antam: {fmt_rp(rates.get('gold_buyback_idr', 2373000))} / gram\n"
+            f"  • Harga Emas Spot Dunia (XAU): ${rates.get('gold_xau_usd', 4110):,.2f} / troy oz (≈ {fmt_rp(rates.get('gold_spot_idr', 2390000))} / gram)\n"
+            f"  • Kurs Nilai Tukar USD/IDR: {fmt_rp(rates['usd_idr'])} per $1 USD"
+        )
     categories_lines = financial_context.get("category_spending_text", "- Belum ada transaksi pengeluaran tercatat")
     budgets_lines = financial_context.get("budget_alerts_text", "- Belum ada anggaran aktif")
     memory_lines = financial_context.get("memory_notes_text", "- Belum ada catatan khusus dari obrolan")
@@ -351,6 +363,8 @@ def build_planner_system_prompt(
 
     snapshot_block = f"""[VERIFIED USER FINANCIAL SNAPSHOT]
 - Mata Uang Acuan: {financial_context.get('base_currency', 'IDR')}
+- Kurs & Harga Komoditas Pasar Terkini (Live Market & Gold Rates — TERSEDIA DI SNAPSHOT):
+{live_rates_lines}
 - Total Kekayaan Bersih (Net Worth): {financial_context.get('net_worth_formatted', 'Rp 0')}
 - Saldo Likuid (Kas/Bank/E-Wallet): {financial_context.get('liquid_balance_formatted', 'Rp 0')}
 - Rincian Dompet Aktif:
