@@ -13,6 +13,8 @@ import {
   PersonalProfile,
   PlannerMessage,
   PlannerStreamMeta,
+  PortfolioReview,
+  AccountBackupItem,
 } from "./types";
 
 const API_BASE = (
@@ -167,6 +169,64 @@ export async function changePassword(data: {
   });
 }
 
+// ----------------- BACKUP, RESET & RESTORE -----------------
+export async function listAccountBackups(): Promise<{ items: AccountBackupItem[] }> {
+  return await apiFetch<{ items: AccountBackupItem[] }>("/auth/backups");
+}
+
+export async function createAccountBackup(title?: string): Promise<AccountBackupItem & { backup_payload: any }> {
+  return await apiFetch<AccountBackupItem & { backup_payload: any }>("/auth/backups", {
+    method: "POST",
+    body: JSON.stringify({ title: title || "Backup Manual" }),
+  });
+}
+
+export async function exportAccountBackup(backupId: string): Promise<any> {
+  return await apiFetch<any>(`/auth/backups/${backupId}/export`);
+}
+
+export async function deleteAccountBackup(backupId: string): Promise<{ ok: boolean; message: string }> {
+  return await apiFetch<{ ok: boolean; message: string }>(`/auth/backups/${backupId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function resetAccountData(data: {
+  password: string;
+  mode: "ZERO_WALLETS" | "FULL_ACCOUNT_RESET";
+  wallet_ids?: string[];
+  clear_transactions?: boolean;
+}): Promise<{
+  ok: boolean;
+  mode: string;
+  reset_wallets_count?: number;
+  deleted_transactions_count?: number;
+  auto_backup_id: string;
+  message: string;
+}> {
+  return await apiFetch("/auth/reset-data", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function restoreAccountData(data: {
+  password: string;
+  backup_id?: string;
+  backup_payload?: any;
+}): Promise<{
+  ok: boolean;
+  restored_wallets_count: number;
+  restored_transactions_count: number;
+  restored_budgets_count: number;
+  message: string;
+}> {
+  return await apiFetch("/auth/restore-data", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 // ----------------- ADMIN -----------------
 export interface AdminStats {
   total_users: number;
@@ -222,9 +282,11 @@ export async function getWallets(month?: string): Promise<{
   total_balance: number;
   personal_balance?: number;
   shared_balance?: number;
+  investment_balance?: number;
   currency: string;
   month_key?: string;
   wallets: Wallet[];
+  portfolio_review?: PortfolioReview;
 }> {
   try {
     const q = month ? `?month=${encodeURIComponent(month)}` : "";
@@ -244,13 +306,29 @@ export async function getWallets(month?: string): Promise<{
   }
 }
 
-export async function createWallet(data: { name: string; type: string; balance: number; currency?: string; color?: string; is_default?: boolean }): Promise<Wallet> {
+export async function createWallet(data: {
+  name: string;
+  type: string;
+  asset_class?: string | null;
+  balance: number;
+  currency?: string;
+  color?: string;
+  is_default?: boolean;
+}): Promise<Wallet> {
   return apiFetch("/wallets", { method: "POST", body: JSON.stringify(data) });
 }
 
 export async function updateWallet(
   walletId: string,
-  data: Partial<{ name: string; type: string; balance: number; color: string; is_default: boolean; is_archived: boolean }>
+  data: Partial<{
+    name: string;
+    type: string;
+    asset_class: string | null;
+    balance: number;
+    color: string;
+    is_default: boolean;
+    is_archived: boolean;
+  }>
 ): Promise<Wallet> {
   return apiFetch(`/wallets/${walletId}`, { method: "PUT", body: JSON.stringify(data) });
 }
@@ -288,6 +366,7 @@ export async function getTransactions(params?: {
   category_id?: string;
   budget_id?: string;
   type?: string;
+  month?: string;
   search?: string;
   limit?: number;
   offset?: number;
@@ -298,8 +377,10 @@ export async function getTransactions(params?: {
     if (params?.category_id) q.append("category_id", params.category_id);
     if (params?.budget_id) q.append("budget_id", params.budget_id);
     if (params?.type) q.append("type", params.type);
+    if (params?.month) q.append("month", params.month);
     if (params?.search) q.append("search", params.search);
     if (params?.limit) q.append("limit", params.limit.toString());
+    if (params?.offset) q.append("offset", params.offset.toString());
     const queryStr = q.toString() ? `?${q.toString()}` : "";
     return await apiFetch(`/transactions${queryStr}`);
   } catch {
@@ -325,9 +406,10 @@ export async function deleteTransaction(txId: string) {
   return apiFetch(`/transactions/${txId}`, { method: "DELETE" });
 }
 
-export async function getTransactionSummary(): Promise<TransactionSummary> {
+export async function getTransactionSummary(month?: string): Promise<TransactionSummary> {
   try {
-    return await apiFetch("/transactions/summary");
+    const q = month ? `?month=${encodeURIComponent(month)}` : "";
+    return await apiFetch(`/transactions/summary${q}`);
   } catch {
     return {
       currency: "IDR",
@@ -543,6 +625,7 @@ export async function simulateChatMessage(message: string, source: string = "TEL
 export async function getPlannerOverview(): Promise<{
   context: PlannerHealthContext;
   allocations: AssetAllocation;
+  portfolio_review?: PortfolioReview;
   personal_profile?: PersonalProfile;
 }> {
   try {
@@ -684,7 +767,12 @@ export async function sendPlannerMessageStream(
 }
 
 // ----------------- FIRE & FINANCIAL FREEDOM -----------------
-export async function getFIREProfile(): Promise<{ profile: any; metrics: FIREMetrics; allocations: AssetAllocation }> {
+export async function getFIREProfile(): Promise<{
+  profile: any;
+  metrics: FIREMetrics;
+  allocations: AssetAllocation;
+  portfolio_review?: PortfolioReview;
+}> {
   try {
     return await apiFetch("/fire/profile");
   } catch {

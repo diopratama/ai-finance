@@ -3,8 +3,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.db import FinancialProfile, Transaction, User, Wallet, get_db
-from app.services.fire_engine import calculate_fire_metrics, get_asset_allocation_recommendation
+from app.db import FinancialProfile, Transaction, User, Wallet, get_db, get_accessible_wallets
+from app.services.fire_engine import (
+    calculate_fire_metrics,
+    evaluate_investment_portfolio,
+    get_asset_allocation_recommendation,
+    is_investment_wallet,
+)
 from app.services.planner_skills_loader import get_confirmed_fields_set, save_confirmed_fields_set
 from app.auth import get_current_user
 
@@ -36,7 +41,7 @@ def get_fire_profile(current_user: User = Depends(get_current_user), db: Session
         db.commit()
         db.refresh(profile)
 
-    wallets = db.query(Wallet).filter(Wallet.user_id == current_user.id, Wallet.is_archived == False).all()
+    wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
     net_worth = sum(w.balance for w in wallets)
 
     metrics = calculate_fire_metrics(
@@ -46,9 +51,26 @@ def get_fire_profile(current_user: User = Depends(get_current_user), db: Session
         current_net_worth=net_worth,
         monthly_savings=0.0,
     )
+    sharia_pref = bool(getattr(profile, "sharia_preference", False))
     allocations = get_asset_allocation_recommendation(
         profile.risk_tolerance,
-        sharia_preference=bool(getattr(profile, "sharia_preference", False)),
+        sharia_preference=sharia_pref,
+    )
+
+    liquid_cash = sum(
+        max(0.0, w.balance)
+        for w in wallets
+        if not is_investment_wallet(w.name, w.type, getattr(w, "asset_class", None))
+        and not any(k in (w.type or "").upper() for k in ("CREDIT", "KREDIT", "PAYLATER", "LOAN", "UTANG", "HUTANG", "CC"))
+    )
+    portfolio_review = evaluate_investment_portfolio(
+        wallets=wallets,
+        risk_tolerance=profile.risk_tolerance or "MODERATE",
+        sharia_preference=sharia_pref,
+        liquid_cash_balance=liquid_cash,
+        monthly_expenses=profile.monthly_living_expense or 8_000_000.0,
+        is_married=((profile.marital_status or "SINGLE").upper() == "MARRIED"),
+        dependents_count=int(profile.dependents_count or 0),
     )
 
     return {
@@ -60,6 +82,7 @@ def get_fire_profile(current_user: User = Depends(get_current_user), db: Session
         },
         "metrics": metrics,
         "allocations": allocations,
+        "portfolio_review": portfolio_review,
     }
 
 

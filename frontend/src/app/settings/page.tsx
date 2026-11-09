@@ -20,6 +20,12 @@ import {
   Sparkles,
   HeartHandshake,
   TrendingUp,
+  Database,
+  Download,
+  Upload,
+  RotateCcw,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import {
   AuthUser,
@@ -29,11 +35,18 @@ import {
   getBotStatus,
   getPlannerOverview,
   updatePersonalProfile,
+  listAccountBackups,
+  createAccountBackup,
+  exportAccountBackup,
+  deleteAccountBackup,
+  resetAccountData,
+  restoreAccountData,
 } from "@/lib/api";
-import { BotStatusMap, PersonalProfile } from "@/lib/types";
+import { BotStatusMap, PersonalProfile, AccountBackupItem } from "@/lib/types";
+import { formatCurrency } from "@/lib/utils";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"account" | "financial">("account");
+  const [activeTab, setActiveTab] = useState<"account" | "financial" | "data">("account");
 
   // Account state
   const [profile, setProfile] = useState<(AuthUser & { created_at: string }) | null>(null);
@@ -69,12 +82,31 @@ export default function SettingsPage() {
   const [finLoading, setFinLoading] = useState<boolean>(false);
   const [finMsg, setFinMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // Backup, Restore & Reset state
+  const [backups, setBackups] = useState<AccountBackupItem[]>([]);
+  const [backupLabel, setBackupLabel] = useState<string>("");
+  const [dataLoading, setDataLoading] = useState<boolean>(false);
+  const [dataMsg, setDataMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Restore Modal / Section state
+  const [restoreTargetId, setRestoreTargetId] = useState<string | null>(null);
+  const [restorePassword, setRestorePassword] = useState<string>("");
+  const [uploadedPayload, setUploadedPayload] = useState<Record<string, any> | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string>("");
+
+  // Reset Section state
+  const [resetMode, setResetMode] = useState<"ZERO_WALLETS" | "FULL_ACCOUNT_RESET">("ZERO_WALLETS");
+  const [resetClearTx, setResetClearTx] = useState<boolean>(false);
+  const [resetPassword, setResetPassword] = useState<string>("");
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const qTab = params.get("tab");
       if (qTab === "financial") {
         setActiveTab("financial");
+      } else if (qTab === "data") {
+        setActiveTab("data");
       }
     }
     loadData();
@@ -109,8 +141,150 @@ export default function SettingsPage() {
         setRiskInput(pp.risk_tolerance || "MODERATE");
         setShariaInput(pp.sharia_preference || false);
       }
+
+      const bList = await listAccountBackups().catch(() => null);
+      if (bList?.items) {
+        setBackups(bList.items);
+      }
     } catch (err: any) {
       setProfileMsg({ type: "error", text: "Gagal memuat profil: " + err.message });
+    }
+  };
+
+  const handleCreateBackup = async (downloadAfter: boolean = false) => {
+    setDataMsg(null);
+    setDataLoading(true);
+    try {
+      const res = await createAccountBackup(backupLabel.trim() || undefined);
+      setBackupLabel("");
+      const bList = await listAccountBackups();
+      setBackups(bList.items);
+      if (downloadAfter && res?.id) {
+        await handleDownloadBackup(res.id);
+      }
+      setDataMsg({
+        type: "success",
+        text: downloadAfter
+          ? "Backup berhasil dibuat & diunduh sebagai file JSON!"
+          : `Cloud Snapshot "${res.title}" berhasil disimpan!`,
+      });
+    } catch (err: any) {
+      setDataMsg({ type: "error", text: err.message || "Gagal membuat backup." });
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  const handleDownloadBackup = async (backupId: string) => {
+    try {
+      const exported = await exportAccountBackup(backupId);
+      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safeLabel = (exported.title || exported.label || "aifinance-backup")
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]+/g, "-");
+      a.download = `${safeLabel}-${backupId.slice(0, 6)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setDataMsg({ type: "error", text: err.message || "Gagal mengunduh file backup JSON." });
+    }
+  };
+
+  const handleDeleteBackup = async (backupId: string) => {
+    if (!confirm("Hapus snapshot backup ini dari penyimpanan Cloud?")) return;
+    setDataMsg(null);
+    try {
+      await deleteAccountBackup(backupId);
+      const bList = await listAccountBackups();
+      setBackups(bList.items);
+      setDataMsg({ type: "success", text: "Snapshot backup berhasil dihapus." });
+    } catch (err: any) {
+      setDataMsg({ type: "error", text: err.message || "Gagal menghapus backup." });
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadedFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(String(ev.target?.result || "{}"));
+        const payload = parsed.data && parsed.data.wallets ? parsed.data : parsed;
+        setUploadedPayload(payload);
+        setRestoreTargetId("FILE_UPLOAD");
+        setDataMsg({
+          type: "success",
+          text: `File "${file.name}" berhasil dibaca. Masukkan kata sandi di bawah untuk mengembalikan (Restore) data.`,
+        });
+      } catch {
+        setUploadedPayload(null);
+        setDataMsg({ type: "error", text: "Format file JSON backup tidak valid." });
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleExecuteRestore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!restorePassword.trim()) {
+      setDataMsg({ type: "error", text: "Kata sandi wajib diisi untuk konfirmasi Restore." });
+      return;
+    }
+    setDataLoading(true);
+    setDataMsg(null);
+    try {
+      const res = await restoreAccountData({
+        password: restorePassword,
+        backup_id: restoreTargetId !== "FILE_UPLOAD" ? restoreTargetId || undefined : undefined,
+        backup_payload: restoreTargetId === "FILE_UPLOAD" ? uploadedPayload || undefined : undefined,
+      });
+      setRestorePassword("");
+      setRestoreTargetId(null);
+      setUploadedPayload(null);
+      setUploadedFileName("");
+      await loadData();
+      setDataMsg({
+        type: "success",
+        text: `${res.message} (${res.restored_wallets_count} dompet & ${res.restored_transactions_count} transaksi dipulihkan).`,
+      });
+    } catch (err: any) {
+      setDataMsg({ type: "error", text: err.message || "Gagal memulihkan data." });
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  const handleExecuteReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetPassword.trim()) {
+      setDataMsg({ type: "error", text: "Kata sandi akun wajib diisi untuk melakukan Reset." });
+      return;
+    }
+    setDataLoading(true);
+    setDataMsg(null);
+    try {
+      const res = await resetAccountData({
+        password: resetPassword,
+        mode: resetMode,
+        clear_transactions: resetClearTx,
+      });
+      setResetPassword("");
+      await loadData();
+      setDataMsg({
+        type: "success",
+        text: `${res.message} Snapshot otomatis telah diamankan sebelum reset.`,
+      });
+    } catch (err: any) {
+      setDataMsg({ type: "error", text: err.message || "Gagal mereset data akun." });
+    } finally {
+      setDataLoading(false);
     }
   };
 
@@ -243,6 +417,22 @@ export default function SettingsPage() {
           <span>Personalisasi Finansial (AI)</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent text-[#8a6300] dark:text-[#f0b000] border border-[#f0b000]/30 font-extrabold">
             {completeness}%
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("data")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border ${
+            activeTab === "data"
+              ? "bg-primary text-primary-foreground border-primary shadow-sm shadow-[#f0b000]/20"
+              : "border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary"
+          }`}
+        >
+          <Database className="w-3.5 h-3.5" />
+          <span>Data, Backup &amp; Reset</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border font-bold">
+            {backups.length}
           </span>
         </button>
       </div>
@@ -748,6 +938,333 @@ export default function SettingsPage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* TAB 3: DATA, BACKUP & RESET */}
+      {activeTab === "data" && (
+        <div className="space-y-6">
+          {dataMsg && (
+            <div
+              className={`p-4 rounded-xl text-xs font-medium flex items-start gap-2 border ${
+                dataMsg.type === "success"
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                  : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
+              }`}
+            >
+              {dataMsg.type === "success" ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              )}
+              <span>{dataMsg.text}</span>
+            </div>
+          )}
+
+          {/* Section 1: Buat Cloud Snapshot & Export JSON */}
+          <div className="p-6 rounded-2xl bg-card border border-border shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-border pb-3">
+              <div className="flex items-center gap-2.5">
+                <Database className="w-5 h-5 text-[#8a6300] dark:text-[#f0b000]" />
+                <div>
+                  <h2 className="text-base font-bold text-foreground">
+                    Backup Pencatatan Dana, Saldo Dompet &amp; Transaksi
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    Simpan snapshot penuh ke Cloud Database atau unduh sebagai file JSON lokal kapan saja.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <input
+                type="text"
+                placeholder="Nama label backup (opsional, misal: Sebelum Gajian November)"
+                value={backupLabel}
+                onChange={(e) => setBackupLabel(e.target.value)}
+                className="flex-1 px-3.5 py-2.5 rounded-xl bg-secondary border border-border text-foreground text-xs focus:outline-none focus:border-[#f0b000]"
+              />
+              <button
+                type="button"
+                disabled={dataLoading}
+                onClick={() => handleCreateBackup(false)}
+                className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-[#f0b000]/20"
+              >
+                <Save className="w-4 h-4" />
+                <span>Simpan Cloud Backup</span>
+              </button>
+              <button
+                type="button"
+                disabled={dataLoading}
+                onClick={() => handleCreateBackup(true)}
+                className="px-4 py-2.5 rounded-xl bg-secondary hover:bg-accent disabled:opacity-50 text-foreground border border-border font-bold text-xs flex items-center justify-center gap-2"
+              >
+                <Download className="w-4 h-4 text-[#8a6300] dark:text-[#f0b000]" />
+                <span>Buat &amp; Unduh JSON</span>
+              </button>
+            </div>
+
+            {/* Daftar Cloud Snapshots */}
+            <div className="pt-2 space-y-2.5">
+              <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                <span>Riwayat Snapshot Backup Tersimpan ({backups.length})</span>
+                <label className="cursor-pointer inline-flex items-center gap-1.5 text-[#8a6300] dark:text-[#f0b000] hover:underline font-semibold">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Restore dari File .JSON Lokal</span>
+                  <input type="file" accept=".json" onChange={handleFileUpload} className="hidden" />
+                </label>
+              </div>
+
+              {backups.length === 0 ? (
+                <div className="p-6 rounded-xl bg-secondary/40 border border-border text-center text-xs text-muted-foreground">
+                  Belum ada Cloud Snapshot tersimpan. Klik <strong>Simpan Cloud Backup</strong> di atas atau sistem akan otomatis membuat snapshot sebelum Anda melakukan Reset.
+                </div>
+              ) : (
+                <div className="divide-y divide-border rounded-xl border border-border overflow-hidden bg-secondary/20">
+                  {backups.map((b) => (
+                    <div
+                      key={b.id}
+                      className="p-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-secondary/40 transition-colors"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-foreground">{b.title}</span>
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                              b.backup_type === "AUTO_PRE_RESET"
+                                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                                : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                            }`}
+                          >
+                            {b.backup_type === "AUTO_PRE_RESET" ? "Auto Pre-Reset" : "Manual Snapshot"}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-2">
+                          <span>
+                            {new Date(b.created_at).toLocaleString("id-ID", {
+                              day: "numeric",
+                              month: "short",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          <span>•</span>
+                          <span>{b.summary?.wallets_count || 0} dompet</span>
+                          <span>•</span>
+                          <span>{b.summary?.transactions_count || 0} transaksi</span>
+                          <span>•</span>
+                          <span className="font-mono font-semibold text-foreground">
+                            Total Saldo: {formatCurrency(b.summary?.total_balance || 0, "IDR")}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRestoreTargetId(b.id);
+                            setUploadedPayload(null);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-accent hover:bg-accent/80 text-[#8a6300] dark:text-[#f0b000] border border-[#f0b000]/30 font-bold text-xs flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Restore</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadBackup(b.id)}
+                          className="px-2.5 py-1.5 rounded-lg bg-secondary hover:bg-accent text-foreground border border-border text-xs flex items-center gap-1"
+                          title="Unduh File JSON"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>JSON</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBackup(b.id)}
+                          className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 transition-colors"
+                          title="Hapus Snapshot"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Password Confirmation Box for Restore */}
+            {restoreTargetId && (
+              <form
+                onSubmit={handleExecuteRestore}
+                className="p-4 rounded-xl bg-accent/60 border border-[#f0b000]/40 space-y-3 text-xs"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-foreground flex items-center gap-2">
+                    <RotateCcw className="w-4 h-4 text-[#8a6300] dark:text-[#f0b000]" />
+                    <span>
+                      Konfirmasi Restore Data{" "}
+                      {restoreTargetId === "FILE_UPLOAD"
+                        ? `dari File "${uploadedFileName}"`
+                        : "dari Cloud Snapshot Terpilih"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRestoreTargetId(null);
+                      setRestorePassword("");
+                      setUploadedPayload(null);
+                    }}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    Batal
+                  </button>
+                </div>
+                <p className="text-muted-foreground text-[11px]">
+                  Seluruh saldo dompet, riwayat transaksi, pos anggaran, dan profil finansial akan dikembalikan sesuai titik backup ini. Masukkan kata sandi akun Anda untuk melanjutkan:
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2.5">
+                  <input
+                    type="password"
+                    required
+                    placeholder="Masukkan kata sandi akun Anda..."
+                    value={restorePassword}
+                    onChange={(e) => setRestorePassword(e.target.value)}
+                    className="flex-1 px-3 py-2 rounded-xl bg-card border border-border text-foreground text-xs focus:outline-none focus:border-[#f0b000]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={dataLoading}
+                    className="px-5 py-2 rounded-xl bg-primary text-primary-foreground font-bold text-xs shadow-sm"
+                  >
+                    {dataLoading ? "Memulihkan..." : "Konfirmasi & Pulihkan Data"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+
+          {/* Section 2: Danger Zone - Reset Dompet / Factory Reset Akun */}
+          <div className="p-6 rounded-2xl bg-card border border-rose-500/30 shadow-sm space-y-5">
+            <div className="flex items-center gap-2.5 border-b border-border pb-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-foreground">
+                  Reset Saldo Dompet &amp; Reset Pencatatan Akun (Wajib Verifikasi Password)
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Gunakan fitur ini jika Anda ingin me-reset seluruh saldo menjadi Rp 0 dan mengatur ulang pencatatan keuangan dari awal.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-700 dark:text-amber-300 flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                <strong>Perlindungan Otomatis:</strong> Sistem secara otomatis menyimpan{" "}
+                <strong>Cloud Snapshot (Auto Pre-Reset)</strong> tepat sebelum mereset data, sehingga Anda tetap bisa memulihkan kembali (Restore) kapan pun dibutuhkan.
+              </span>
+            </div>
+
+            <form onSubmit={handleExecuteReset} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setResetMode("ZERO_WALLETS")}
+                  className={`p-4 rounded-xl border text-left transition-all ${
+                    resetMode === "ZERO_WALLETS"
+                      ? "bg-rose-500/10 border-rose-500/40 text-foreground"
+                      : "bg-secondary/40 border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <div className="font-bold text-sm text-foreground flex items-center justify-between">
+                    <span>1. Reset Saldo Dompet ke Rp 0</span>
+                    {resetMode === "ZERO_WALLETS" && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-bold">
+                        Aktif
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Mengubah saldo semua dompet milik Anda menjadi Rp 0 tanpa menghapus daftar dompet atau pos anggaran yang sudah dibuat.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setResetMode("FULL_ACCOUNT_RESET")}
+                  className={`p-4 rounded-xl border text-left transition-all ${
+                    resetMode === "FULL_ACCOUNT_RESET"
+                      ? "bg-rose-500/10 border-rose-500/40 text-foreground"
+                      : "bg-secondary/40 border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <div className="font-bold text-sm text-foreground flex items-center justify-between">
+                    <span>2. Factory Reset Seluruh Pencatatan</span>
+                    {resetMode === "FULL_ACCOUNT_RESET" && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-bold">
+                        Aktif
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Menghapus seluruh riwayat transaksi, pos anggaran gajian, kategori custom, riwayat chat AI, dan mengembalikan dompet ke setelan awal bersaldo Rp 0.
+                  </p>
+                </button>
+              </div>
+
+              {resetMode === "ZERO_WALLETS" && (
+                <label className="flex items-center gap-2 cursor-pointer p-3 rounded-xl bg-secondary/50 border border-border">
+                  <input
+                    type="checkbox"
+                    checked={resetClearTx}
+                    onChange={(e) => setResetClearTx(e.target.checked)}
+                    className="rounded accent-rose-500"
+                  />
+                  <span className="text-foreground font-medium">
+                    Hapus juga seluruh riwayat transaksi sebelumnya (agar laporan bulanan ikut mulai dari Rp 0)
+                  </span>
+                </label>
+              )}
+
+              <div className="pt-2 border-t border-border flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-4">
+                <div className="flex-1">
+                  <label className="block font-bold text-foreground mb-1">
+                    Masukkan Kata Sandi Akun untuk Verifikasi Keamanan <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Kata sandi login Anda..."
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-secondary border border-border text-foreground text-xs focus:outline-none focus:border-rose-500"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={dataLoading}
+                  className="px-5 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-rose-500/20"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>
+                    {dataLoading
+                      ? "Memproses Reset..."
+                      : resetMode === "FULL_ACCOUNT_RESET"
+                      ? "Eksekusi Factory Reset Akun"
+                      : "Reset Saldo Dompet ke Rp 0"}
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

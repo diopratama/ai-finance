@@ -4,6 +4,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from app.db import (
+    FinancialProfile,
     Wallet,
     Transaction,
     User,
@@ -15,6 +16,12 @@ from app.db import (
 )
 from app.auth import get_current_user
 from app.api.budgets import compute_monthly_allocation_data, get_current_month_key
+from app.services.fire_engine import (
+    ASSET_CLASS_LABELS,
+    evaluate_investment_portfolio,
+    infer_wallet_asset_class,
+    is_investment_wallet,
+)
 
 router = APIRouter(prefix="/wallets", tags=["Wallets"])
 
@@ -22,6 +29,7 @@ router = APIRouter(prefix="/wallets", tags=["Wallets"])
 class CreateWalletRequest(BaseModel):
     name: str
     type: str = "BANK"  # Any preset or custom free-text type e.g. BANK, EWALLET, KANTONG DIGITAL, BANK SYARIAH
+    asset_class: Optional[str] = None  # Optional explicit class: EQUITY, BOND, MONEY_MARKET, GOLD, CRYPTO
     balance: float = 0.0
     currency: str = "IDR"
     color: str = "#f0b000"
@@ -31,6 +39,7 @@ class CreateWalletRequest(BaseModel):
 class UpdateWalletRequest(BaseModel):
     name: Optional[str] = None
     type: Optional[str] = None
+    asset_class: Optional[str] = None
     balance: Optional[float] = None
     color: Optional[str] = None
     is_default: Optional[bool] = None
@@ -51,6 +60,41 @@ class AddWalletMemberRequest(BaseModel):
 
 class UpdateWalletMemberRequest(BaseModel):
     role: str  # "EDITOR" | "VIEWER"
+
+
+def _build_user_portfolio_review(user: User, wallets: List[Wallet], db: Session) -> dict:
+    profile = db.query(FinancialProfile).filter(FinancialProfile.user_id == user.id).first()
+    risk_tolerance = (profile.risk_tolerance if profile and profile.risk_tolerance else "MODERATE").upper()
+    sharia_pref = bool(profile.sharia_preference) if profile else False
+    monthly_exp = (profile.monthly_living_expense if profile and (profile.monthly_living_expense or 0) > 0 else 8_000_000.0)
+    is_married = ((profile.marital_status if profile else "SINGLE") or "SINGLE").upper() == "MARRIED"
+    deps = int(profile.dependents_count or 0) if profile else 0
+
+    liquid_cash = sum(
+        max(0.0, w.balance)
+        for w in wallets
+        if not is_investment_wallet(w.name, w.type, getattr(w, "asset_class", None))
+        and not any(k in (w.type or "").upper() for k in ("CREDIT", "KREDIT", "PAYLATER", "LOAN", "UTANG", "HUTANG", "CC"))
+    )
+
+    return evaluate_investment_portfolio(
+        wallets=wallets,
+        risk_tolerance=risk_tolerance,
+        sharia_preference=sharia_pref,
+        liquid_cash_balance=liquid_cash,
+        monthly_expenses=monthly_exp,
+        is_married=is_married,
+        dependents_count=deps,
+    )
+
+
+@router.get("/portfolio-review")
+def get_portfolio_review(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+    return _build_user_portfolio_review(current_user, wallets, db)
 
 
 @router.get("")
@@ -92,10 +136,17 @@ def list_wallets(
             else None
         )
 
+        explicit_ac = getattr(w, "asset_class", None)
+        resolved_ac = infer_wallet_asset_class(w.name, w.type, explicit_ac)
+        is_inv = resolved_ac is not None
+
         serialized_wallets.append({
             "id": w.id,
             "name": w.name,
             "type": w.type,
+            "asset_class": explicit_ac or resolved_ac,
+            "asset_class_label": ASSET_CLASS_LABELS.get(resolved_ac, None) if resolved_ac else None,
+            "is_investment": is_inv,
             "balance": round(w.balance, 2),
             "currency": w.currency,
             "color": w.color,
@@ -114,13 +165,17 @@ def list_wallets(
             "assigned_items_count": alloc_by_wallet.get(w.id, {}).get("items_count", 0),
         })
 
+    portfolio_review = _build_user_portfolio_review(current_user, wallets, db)
+
     return {
         "total_balance": round(total_balance, 2),
         "personal_balance": round(personal_balance, 2),
         "shared_balance": round(shared_balance, 2),
+        "investment_balance": portfolio_review["total_investment_balance"],
         "currency": current_user.base_currency,
         "month_key": alloc["month_key"],
         "wallets": serialized_wallets,
+        "portfolio_review": portfolio_review,
     }
 
 
@@ -130,6 +185,9 @@ def create_wallet(req: CreateWalletRequest, current_user: User = Depends(get_cur
     if not clean_name:
         raise HTTPException(status_code=400, detail="Nama dompet tidak boleh kosong")
     clean_type = (req.type or "BANK").strip().upper()[:64] or "BANK"
+    clean_ac = req.asset_class.strip().upper() if req.asset_class and req.asset_class.strip() else None
+    if clean_ac and clean_ac not in ASSET_CLASS_LABELS:
+        clean_ac = None
 
     if req.is_default:
         db.query(Wallet).filter(Wallet.user_id == current_user.id).update({"is_default": False})
@@ -138,6 +196,7 @@ def create_wallet(req: CreateWalletRequest, current_user: User = Depends(get_cur
         user_id=current_user.id,
         name=clean_name[:100],
         type=clean_type,
+        asset_class=clean_ac,
         balance=req.balance,
         currency=req.currency.strip().upper() or "IDR",
         color=req.color or "#f0b000",
@@ -146,10 +205,14 @@ def create_wallet(req: CreateWalletRequest, current_user: User = Depends(get_cur
     db.add(wallet)
     db.commit()
     db.refresh(wallet)
+    resolved_ac = infer_wallet_asset_class(wallet.name, wallet.type, wallet.asset_class)
     return {
         "id": wallet.id,
         "name": wallet.name,
         "type": wallet.type,
+        "asset_class": wallet.asset_class or resolved_ac,
+        "asset_class_label": ASSET_CLASS_LABELS.get(resolved_ac) if resolved_ac else None,
+        "is_investment": resolved_ac is not None,
         "balance": round(wallet.balance, 2),
         "currency": wallet.currency,
         "color": wallet.color,
@@ -179,6 +242,9 @@ def update_wallet(wallet_id: str, req: UpdateWalletRequest, current_user: User =
         clean_type = updates["type"].strip().upper()[:64]
         if clean_type:
             wallet.type = clean_type
+    if "asset_class" in updates:
+        raw_ac = (updates["asset_class"] or "").strip().upper()
+        wallet.asset_class = raw_ac if raw_ac in ASSET_CLASS_LABELS else None
     if "balance" in updates and updates["balance"] is not None:
         wallet.balance = float(updates["balance"])
     if "color" in updates and updates["color"] is not None:
@@ -190,10 +256,14 @@ def update_wallet(wallet_id: str, req: UpdateWalletRequest, current_user: User =
 
     db.commit()
     db.refresh(wallet)
+    resolved_ac = infer_wallet_asset_class(wallet.name, wallet.type, wallet.asset_class)
     return {
         "id": wallet.id,
         "name": wallet.name,
         "type": wallet.type,
+        "asset_class": wallet.asset_class or resolved_ac,
+        "asset_class_label": ASSET_CLASS_LABELS.get(resolved_ac) if resolved_ac else None,
+        "is_investment": resolved_ac is not None,
         "balance": round(wallet.balance, 2),
         "currency": wallet.currency,
         "color": wallet.color,

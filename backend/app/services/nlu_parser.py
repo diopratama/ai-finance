@@ -74,7 +74,7 @@ CATEGORY_KEYWORDS = {
 }
 
 WALLET_KEYWORDS = {
-    "cash": ["cash", "tunai", "dompet"],
+    "cash": ["cash", "tunai", "dompet tunai"],
     "bca": ["bca", "bank bca"],
     "mandiri": ["mandiri", "livin"],
     "bri": ["bri", "brimo"],
@@ -88,11 +88,23 @@ WALLET_KEYWORDS = {
     "danamon": ["danamon"],
     "bibit": ["bibit"],
     "stockbit": ["stockbit"],
+    "bareksa": ["bareksa"],
+    "ajaib": ["ajaib"],
+    "pluang": ["pluang"],
+    "rdn": ["rdn", "rekening dana nasabah"],
+    "emas": ["tabungan emas", "emas", "antam", "pegadaian"],
+    "sbn": ["sbn", "sukuk", "obligasi"],
+    "crypto": ["crypto", "tokocrypto", "indodax", "binance", "pintu"],
 }
 
 _BUDGET_STOPWORDS = {
     "budget", "pos", "anggaran", "tabungan", "nabung", "uang", "dana",
     "bayar", "beli", "isi", "untuk", "dan", "bulanan", "cash", "cicilan",
+}
+
+_WALLET_FILLER_WORDS = {
+    "saldo", "dana", "uang", "rekening", "dompet", "akun", "kantong",
+    "sebesar", "senilai", "sejumlah", "nominal",
 }
 
 
@@ -142,23 +154,47 @@ def match_wallet_from_str(
     candidate: str,
     user_wallets: Optional[List[str]] = None,
 ) -> Optional[str]:
-    """Matches a string fragment to a known user wallet or alias."""
+    """Matches a string fragment to a known user wallet or alias, stripping common filler words."""
     if not candidate:
         return None
-    cand_clean = candidate.strip().lower()
+    cand_raw = candidate.strip().lower()
+    # Remove trailing/leading numbers or currency notations from candidate fragment
+    cand_clean = re.sub(r'\b(?:rp\.?\s*)?[0-9]+(?:[\.,][0-9]+)?\s*(?:jt|juta|rb|ribu|k|usd)?\b', '', cand_raw).strip()
+    if not cand_clean:
+        cand_clean = cand_raw
+
+    # Also build a stripped version without generic filler words (like "saldo", "dompet", "rekening")
+    tokens = [t for t in cand_clean.split() if t not in _WALLET_FILLER_WORDS]
+    cand_core = " ".join(tokens).strip()
 
     if user_wallets:
-        # Exact match
+        # 1. Exact match against full candidate or core candidate
         for w in user_wallets:
-            if w.lower() == cand_clean:
+            wl = w.lower().strip()
+            if wl == cand_clean or (cand_core and wl == cand_core):
                 return w
-        # Word boundary or containment
+        # 2. Full wallet name appears inside candidate or candidate core appears as whole word in wallet name
         for w in sorted(user_wallets, key=len, reverse=True):
-            if re.search(rf"\b{re.escape(cand_clean)}\b", w.lower()) or re.search(rf"\b{re.escape(w.lower())}\b", cand_clean):
+            wl = w.lower().strip()
+            if re.search(rf"\b{re.escape(wl)}\b", cand_clean):
                 return w
+            if cand_core and len(cand_core) >= 2 and re.search(rf"\b{re.escape(cand_core)}\b", wl):
+                return w
+        # 3. Token overlap with user wallet non-filler tokens
+        if cand_core:
+            cand_toks = set(cand_core.split())
+            for w in sorted(user_wallets, key=len, reverse=True):
+                w_toks = {t for t in w.lower().split() if t not in _WALLET_FILLER_WORDS and len(t) >= 2}
+                if w_toks and (cand_toks & w_toks):
+                    return w
 
     for w_key, aliases in WALLET_KEYWORDS.items():
         if any(re.search(rf"\b{re.escape(a)}\b", cand_clean) for a in aliases):
+            # If user_wallets is provided, check if any user wallet matches this keyword key
+            if user_wallets:
+                for uw in user_wallets:
+                    if w_key in uw.lower() or any(a in uw.lower() for a in aliases):
+                        return uw
             return aliases[0].upper()
     return None
 
@@ -168,46 +204,97 @@ def parse_transaction_text(
     user_wallets: Optional[List[str]] = None,
     custom_categories: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Parses natural text input into structured transaction parameters."""
+    """Parses natural text input into structured transaction parameters across all wallet types."""
     text_lower = raw_text.lower().strip()
 
     # Extract Amount
     parsed_amt = parse_indonesian_amount(text_lower)
     amount, currency = parsed_amt if parsed_amt else (0.0, "IDR")
 
-    # Check for transfer / topup keywords
-    is_topup = any(w in text_lower for w in ["topup", "top up", "isi saldo", "isi dompet", "isi gopay", "isi ovo", "tambah saldo", "isi rekening"])
-    is_explicit_transfer = any(w in text_lower for w in ["transfer", "tf ", "pindah dana", "pindah saldo", "kirim saldo"])
+    # Check for transfer / addition / subtraction keywords
+    is_topup = any(
+        w in text_lower
+        for w in [
+            "topup", "top up", "isi saldo", "isi dompet", "isi gopay", "isi ovo",
+            "tambah saldo", "tambah dana", "tambah uang", "masuk dana", "uang masuk",
+            "setor", "nabung", "investasi masuk", "dividen",
+        ]
+    ) or bool(re.match(r'^\+\s*(?:rp\.?\s*)?\d', text_lower))
+
+    is_explicit_subtract = any(
+        w in text_lower
+        for w in [
+            "kurangi saldo", "kurang saldo", "kurangi dana", "potong saldo", "potong dana",
+            "tarik dana", "tarik saldo", "tarik tunai", "keluar dana", "uang keluar", "withdraw",
+        ]
+    ) or bool(re.match(r'^-\s*(?:rp\.?\s*)?\d', text_lower))
+
+    is_explicit_transfer = any(
+        w in text_lower
+        for w in [
+            "transfer", "tf ", "pindah dana", "pindah saldo", "kirim saldo", "kirim dana", "mutasi",
+        ]
+    )
 
     # Extract source and destination wallet hints
     source_wallet_hint = None
     target_wallet_hint = None
 
-    # Detect source wallet (preceded by dari / pake / pakai / via / lewat)
-    src_match = re.search(r'(?:dari|pake|pakai|via|lewat)\s+([a-zA-Z0-9_\s]+?)(?:\s+(?:ke|sebesar|nominal|sejumlah|\d)|$)', text_lower)
+    # 1. Detect source wallet preceded by dari / pake / pakai / via / lewat
+    src_match = re.search(
+        r'\b(?:dari|pake|pakai|via|lewat)\s+([a-zA-Z0-9_\s]+?)(?:\s+(?:ke|menuju|sebesar|nominal|sejumlah|senilai|\d|rp\b)|$)',
+        text_lower,
+    )
     if src_match:
         source_wallet_hint = match_wallet_from_str(src_match.group(1).strip(), user_wallets)
 
-    # Detect target wallet
-    # 1. After "ke"
-    dest_match = re.search(r'\bke\s+([a-zA-Z0-9_\s]+?)(?:\s+(?:dari|sebesar|nominal|sejumlah|\d)|$)', text_lower)
+    # 2. Detect target wallet preceded by ke / menuju
+    dest_match = re.search(
+        r'\b(?:ke|menuju)\s+([a-zA-Z0-9_\s]+?)(?:\s+(?:dari|pake|pakai|via|lewat|sebesar|nominal|sejumlah|senilai|\d|rp\b)|$)',
+        text_lower,
+    )
     if dest_match:
         target_wallet_hint = match_wallet_from_str(dest_match.group(1).strip(), user_wallets)
 
-    # 2. If topup e.g. "topup saldo gopay" or "topup bca"
+    # 3. Pattern: "transfer/tf/pindah [Wallet A] ke [Wallet B]" (without "dari")
+    if is_explicit_transfer and not source_wallet_hint and target_wallet_hint:
+        direct_tf_match = re.search(
+            r'(?:transfer|tf|pindah(?:\s+dana|\s+saldo)?|kirim(?:\s+dana|\s+saldo)?)\s+([a-zA-Z0-9_\s]+?)\s+(?:ke|menuju)\s+',
+            text_lower,
+        )
+        if direct_tf_match:
+            cand_src = match_wallet_from_str(direct_tf_match.group(1).strip(), user_wallets)
+            if cand_src and cand_src.lower() != target_wallet_hint.lower():
+                source_wallet_hint = cand_src
+
+    # 4. If topup/add e.g. "topup saldo gopay 100rb", "tambah saldo bibit 2jt", "nabung emas 500rb dari bca"
     if not target_wallet_hint and is_topup:
-        topup_match = re.search(r'(?:topup|top\s*up|isi|tambah)\s+(?:saldo\s+)?([a-zA-Z0-9_\s]+?)(?:\s+(?:dari|pake|pakai|via|sebesar|\d)|$)', text_lower)
+        topup_match = re.search(
+            r'(?:topup|top\s*up|isi|tambah|masuk|setor|nabung)\s+(?:saldo\s+|dana\s+|uang\s+|ke\s+)?([a-zA-Z0-9_\s]+?)(?:\s+(?:dari|pake|pakai|via|sebesar|senilai|sejumlah|\d|rp\b)|$)',
+            text_lower,
+        )
         if topup_match:
             target_wallet_hint = match_wallet_from_str(topup_match.group(1).strip(), user_wallets)
 
-    # If both source and target wallets are found, it's definitely a TRANSFER
+    # 5. If explicit subtract e.g. "kurangi saldo bca 200rb", "tarik dana bibit 1jt"
+    if not target_wallet_hint and is_explicit_subtract:
+        sub_match = re.search(
+            r'(?:kurangi|kurang|potong|tarik|keluar|withdraw)\s+(?:saldo\s+|dana\s+|uang\s+|tunai\s+|dari\s+)?([a-zA-Z0-9_\s]+?)(?:\s+(?:sebesar|senilai|sejumlah|\d|rp\b)|$)',
+            text_lower,
+        )
+        if sub_match:
+            target_wallet_hint = match_wallet_from_str(sub_match.group(1).strip(), user_wallets)
+
+    # Determine transaction type
     if source_wallet_hint and target_wallet_hint and source_wallet_hint.lower() != target_wallet_hint.lower():
         tx_type = "TRANSFER"
     elif is_explicit_transfer:
         tx_type = "TRANSFER"
+    elif is_explicit_subtract:
+        tx_type = "EXPENSE"
     elif is_topup:
         tx_type = "INCOME"
-    elif any(w in text_lower for w in ["gaji", "income", "dapat uang", "bonus", "terima", "cair", "pendapatan", "transferan dari"]):
+    elif any(w in text_lower for w in ["gaji", "income", "dapat uang", "bonus", "terima", "cair", "pendapatan", "transferan dari", "dividen", "imbal hasil", "kupon sbn"]):
         tx_type = "INCOME"
     else:
         tx_type = "EXPENSE"
@@ -229,6 +316,11 @@ def parse_transaction_text(
         if not detected_wallet:
             for w_key, aliases in WALLET_KEYWORDS.items():
                 if any(re.search(rf"\b{re.escape(a)}\b", text_lower) for a in aliases):
+                    if user_wallets:
+                        matched_uw = next((uw for uw in user_wallets if w_key in uw.lower() or any(a in uw.lower() for a in aliases)), None)
+                        if matched_uw:
+                            detected_wallet = matched_uw
+                            break
                     detected_wallet = aliases[0].upper()
                     break
 
@@ -237,7 +329,10 @@ def parse_transaction_text(
     if tx_type == "TRANSFER":
         category_name = "Lain-lain"
     elif is_topup or tx_type == "INCOME":
-        category_name = "Gaji & Pendapatan"
+        if any(k in text_lower for k in ("dividen", "kupon", "imbal hasil", "bunga", "bagi hasil")):
+            category_name = "Investasi"
+        else:
+            category_name = "Gaji & Pendapatan"
     else:
         matched_custom = None
         if custom_categories:
@@ -254,11 +349,13 @@ def parse_transaction_text(
                     break
 
     # Clean description
-    clean_desc = raw_text
+    clean_desc = raw_text.strip()
     if tx_type == "TRANSFER" and source_wallet_hint and target_wallet_hint:
         clean_desc = f"Transfer dari {source_wallet_hint} ke {target_wallet_hint}"
-    elif is_topup and detected_wallet:
-        clean_desc = f"Top Up Saldo {detected_wallet}"
+    elif is_topup and (target_wallet_hint or detected_wallet):
+        clean_desc = f"Penambahan Saldo {target_wallet_hint or detected_wallet}"
+    elif is_explicit_subtract and (target_wallet_hint or detected_wallet):
+        clean_desc = f"Pengurangan Saldo {target_wallet_hint or detected_wallet}"
     else:
         clean_desc = re.sub(r'(?:pake|dari|ke|via)\s+[a-z0-9]+', '', clean_desc, flags=re.IGNORECASE).strip()
         if not clean_desc or len(clean_desc) < 3:

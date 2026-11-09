@@ -20,6 +20,9 @@ from app.db import (
     get_wallet_role,
 )
 from app.api.budgets import compute_budget_spent_map, get_current_month_key
+from app.api.transactions import get_transaction_summary
+from app.api.wallets import _build_user_portfolio_review
+from app.services.fire_engine import ASSET_CLASS_LABELS, infer_wallet_asset_class
 from app.services.nlu_parser import match_budget_item_from_text, parse_transaction_text
 from app.services.router_service import router_service
 from app.auth import get_optional_user
@@ -34,6 +37,90 @@ class SimulateChatRequest(BaseModel):
     receipt_data: Optional[Dict[str, Any]] = None
 
 
+def _fmt_rp(val: float) -> str:
+    return f"Rp {int(round(val)):,}".replace(",", ".")
+
+
+def _format_bot_wallets_reply(user: User, db: Session) -> str:
+    wallets = get_accessible_wallets(db, user.id, min_role="VIEWER")
+    if not wallets:
+        return (
+            "⚠️ Anda belum memiliki dompet aktif.\n"
+            "Silakan tambahkan dompet di web dashboard: https://aifinance.fellow.my.id/wallets"
+        )
+    total_balance = sum(w.balance for w in wallets)
+    lines = ["💳 Saldo Dompet & Rekening Anda:\n"]
+    for w in wallets:
+        ac = infer_wallet_asset_class(w.name, w.type, getattr(w, "asset_class", None))
+        icon = "📈" if ac else ("💵" if w.type == "CASH" else ("🏦" if w.type == "BANK" else ("📱" if w.type == "EWALLET" else "💳")))
+        badges = []
+        if w.is_default:
+            badges.append("Utama")
+        if w.user_id != user.id:
+            badges.append("Bersama")
+        if ac:
+            badges.append(ASSET_CLASS_LABELS.get(ac, "Investasi"))
+        badge_str = f" ({', '.join(badges)})" if badges else ""
+        lines.append(f"• {icon} {w.name}{badge_str}: {_fmt_rp(w.balance)}")
+
+    lines.append(f"\n💰 Total Saldo Tersedia: {_fmt_rp(total_balance)} ({user.base_currency or 'IDR'})")
+    return "\n".join(lines)
+
+
+def _format_bot_monthly_report_reply(user: User, db: Session) -> str:
+    summary = get_transaction_summary(month=None, current_user=user, db=db)
+    m = summary["monthly"]
+    mom_inc = f"+{m['income_mom_pct']}%" if m["income_mom_pct"] >= 0 else f"{m['income_mom_pct']}%"
+    mom_exp = f"+{m['expense_mom_pct']}%" if m["expense_mom_pct"] >= 0 else f"{m['expense_mom_pct']}%"
+
+    lines = [
+        f"📊 Laporan Bulanan ({m['month_label']})\n",
+        f"• Pemasukan: {_fmt_rp(m['income'])} ({mom_inc} vs bln lalu)",
+        f"• Pengeluaran: {_fmt_rp(m['expense'])} ({mom_exp} vs bln lalu)",
+        f"• Arus Kas Bersih: {_fmt_rp(m['net_cashflow'])}",
+        f"• Rasio Tabungan (Savings Rate): {m['savings_rate']}%",
+        f"• Total Transaksi: {m['tx_count']} transaksi",
+    ]
+
+    top_cats = summary.get("expense_categories", [])[:3]
+    if top_cats:
+        lines.append("\n🏷️ Top Kategori Pengeluaran:")
+        for c in top_cats:
+            lines.append(f"  - {c['name']}: {_fmt_rp(c['total'])} ({c['percentage']}%)")
+
+    return "\n".join(lines)
+
+
+def _format_bot_portfolio_review_reply(user: User, db: Session) -> str:
+    wallets = get_accessible_wallets(db, user.id, min_role="VIEWER")
+    rev = _build_user_portfolio_review(user, wallets, db)
+
+    if not rev["has_investment_wallets"]:
+        return (
+            "📈 Review Portofolio Investasi\n\n"
+            "Anda belum memiliki dompet bertipe Investasi (INVESTMENT / RDN / Saham / Emas / SBN).\n"
+            f"Referensi profil {rev['reference_profile_name']} menyarankan alokasi dengan estimasi CAGR {rev['expected_cagr']}."
+        )
+
+    lines = [
+        f"📈 Review Portofolio Investasi ({rev['reference_profile_name']})\n",
+        f"• Total Portofolio Investasi: {_fmt_rp(rev['total_investment_balance'])} ({rev['invested_ratio_pct']}% dari Kekayaan Bersih)",
+        f"• Skor Kesesuaian Best Practice: {rev['alignment_score']}/100 ({rev['status_label']})",
+        "\n🎯 Perbandingan Alokasi Aktual vs Target:",
+    ]
+    for comp in rev["allocations_comparison"]:
+        lines.append(
+            f"  - {comp['asset_class_label']}: Aktual {comp['actual_pct']}% ({_fmt_rp(comp['actual_amount'])}) vs Target {comp['target_pct']}% -> {comp['status_text']}"
+        )
+
+    if rev["recommendations"]:
+        lines.append("\n💡 Rekomendasi Rebalancing & Best Practice:")
+        for r in rev["recommendations"][:3]:
+            lines.append(f"  • {r}")
+
+    return "\n".join(lines)
+
+
 def _process_user_transaction_message(
     user: User,
     raw_text: str,
@@ -42,6 +129,53 @@ def _process_user_transaction_message(
     db: Session,
 ) -> Dict[str, Any]:
     """Helper to parse and save a transaction for a verified user, with smart Budget & Fund Location routing."""
+    clean_cmd = (raw_text or "").strip()
+    lower_cmd = clean_cmd.lower()
+
+    # Check if message is a query command (/saldo, /laporan, /portofolio, /help)
+    if clean_cmd in ("/saldo", "/dompet", "/wallets") or (
+        not any(ch.isdigit() for ch in lower_cmd)
+        and any(k in lower_cmd for k in ("cek saldo", "saldo saya", "lihat saldo", "total saldo", "sisa saldo", "cek dompet"))
+    ):
+        msg = _format_bot_wallets_reply(user, db)
+        return {"success": True, "command": "SALDO", "message": msg}
+
+    if clean_cmd in ("/summary", "/laporan", "/report") or (
+        not any(ch.isdigit() for ch in lower_cmd)
+        and any(k in lower_cmd for k in ("cek laporan", "laporan bulanan", "ringkasan bulan", "rekap bulanan", "summary bulan"))
+    ):
+        msg = _format_bot_monthly_report_reply(user, db)
+        return {"success": True, "command": "LAPORAN", "message": msg}
+
+    if clean_cmd in ("/portofolio", "/portfolio", "/investasi") or (
+        not any(ch.isdigit() for ch in lower_cmd)
+        and any(k in lower_cmd for k in ("review portofolio", "cek portofolio", "review investasi", "cek investasi", "evaluasi portofolio"))
+    ):
+        msg = _format_bot_portfolio_review_reply(user, db)
+        return {"success": True, "command": "PORTOFOLIO", "message": msg}
+
+    if clean_cmd in ("/help", "/bantuan"):
+        help_msg = (
+            "💡 Panduan Penggunaan AI-Finance Bot:\n\n"
+            "• Tambah Dana ke Dompet Apapun:\n"
+            "  - 'tambah saldo bca 500rb'\n"
+            "  - 'topup gopay 250rb'\n"
+            "  - 'setor ke bibit 2jt'\n\n"
+            "• Kurangi Dana / Catat Pengeluaran:\n"
+            "  - 'kopi susu 25rb bayar gopay'\n"
+            "  - 'kurangi saldo mandiri 100rb'\n"
+            "  - 'tarik dana bibit 500rb'\n\n"
+            "• Transfer Antar Semua Dompet:\n"
+            "  - 'transfer 500rb dari mandiri ke jago'\n"
+            "  - 'transfer bca ke bibit 1jt'\n"
+            "  - 'topup gopay 100rb dari bca'\n\n"
+            "• Perintah Cepat:\n"
+            "  - /saldo : Cek saldo semua dompet\n"
+            "  - /laporan : Cek laporan pemasukan & pengeluaran bulan ini\n"
+            "  - /portofolio : Review portofolio dompet investasi vs best practice"
+        )
+        return {"success": True, "command": "HELP", "message": help_msg}
+
     wallets = get_accessible_wallets(db, user.id, min_role="EDITOR")
     wallet_names = [w.name for w in wallets]
     user_custom_cats = [
@@ -403,67 +537,7 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
                 "Contoh: /pair 123456"
             )
 
-        # Check for /saldo or /dompet or natural text query "cek saldo"
-        text_lower = text.lower()
-        if text in ("/saldo", "/dompet", "/wallets") or any(
-            k in text_lower for k in ("cek saldo", "saldo saya", "lihat saldo", "total saldo", "sisa saldo", "cek dompet")
-        ):
-            user = bot_link.user
-            wallets = get_accessible_wallets(db, user.id, min_role="VIEWER")
-            if not wallets:
-                return await _send_telegram_reply(
-                    chat_id,
-                    "⚠️ Anda belum memiliki dompet aktif.\nSilakan tambahkan dompet di web dashboard: https://aifinance.fellow.my.id/wallets",
-                )
-
-            total_balance = sum(w.balance for w in wallets)
-            lines = ["💳 Saldo Dompet & Rekening Anda:\n"]
-            for w in wallets:
-                icon = "💵" if w.type == "CASH" else ("🏦" if w.type == "BANK" else ("📱" if w.type == "EWALLET" else "💳"))
-                fmt_bal = f"Rp {int(round(w.balance)):,}".replace(",", ".")
-                badges = []
-                if w.is_default:
-                    badges.append("Utama")
-                if w.user_id != user.id:
-                    badges.append("Bersama")
-                badge_str = f" ({', '.join(badges)})" if badges else ""
-                lines.append(f"• {icon} {w.name}{badge_str}: {fmt_bal}")
-
-            fmt_total = f"Rp {int(round(total_balance)):,}".replace(",", ".")
-            lines.append(f"\n💰 Total Saldo Tersedia: {fmt_total} ({user.base_currency or 'IDR'})")
-            return await _send_telegram_reply(chat_id, "\n".join(lines))
-
-        # Check for /summary command
-        if text in ("/summary", "/laporan"):
-            user = bot_link.user
-            transactions = db.query(Transaction).filter(Transaction.user_id == user.id).all()
-            total_exp = sum(t.amount_in_base for t in transactions if t.type == "EXPENSE")
-            total_inc = sum(t.amount_in_base for t in transactions if t.type == "INCOME")
-            summary_msg = (
-                f"📊 Ringkasan Finansial Anda\n"
-                f"• Total Pemasukan: Rp {int(total_inc):,}\n"
-                f"• Total Pengeluaran: Rp {int(total_exp):,}\n"
-                f"• Saldo Bersih: Rp {int(total_inc - total_exp):,}"
-            ).replace(",", ".")
-            return await _send_telegram_reply(chat_id, summary_msg)
-
-        if text in ("/help", "/bantuan"):
-            help_msg = (
-                "💡 Panduan Penggunaan AI-Finance Bot:\n\n"
-                "• Catat Pengeluaran:\n"
-                "  - 'kopi susu 25rb bayar gopay'\n"
-                "  - 'beli belanja bulanan 450.000'\n\n"
-                "• Transfer & Top Up Saldo:\n"
-                "  - 'topup gopay 100rb dari bca'\n"
-                "  - 'transfer 500rb dari mandiri ke jago'\n"
-                "  - 'topup saldo gopay 1jt'\n\n"
-                "• Cek Saldo Dompet: Ketik /saldo atau 'cek saldo'\n"
-                "• Cek Ringkasan: Ketik /summary atau /laporan\n"
-                "• Bantuan: Ketik /help"
-            )
-            return await _send_telegram_reply(chat_id, help_msg)
-
-        # Process natural language expense
+        # Process natural language command or transaction
         result = _process_user_transaction_message(
             user=bot_link.user,
             raw_text=text,
@@ -500,6 +574,39 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
     try:
         body = await request.json()
         logger.info("WhatsApp payload received: %s", body)
+
+        # Extract WhatsApp text & sender if standard Cloud API format or direct payload
+        sender_id = body.get("from")
+        text = body.get("text")
+        if isinstance(text, dict):
+            text = text.get("body", "")
+
+        if not sender_id and "entry" in body:
+            for entry in body.get("entry", []):
+                for change in entry.get("changes", []):
+                    val = change.get("value", {})
+                    msgs = val.get("messages", [])
+                    if msgs:
+                        sender_id = str(msgs[0].get("from", ""))
+                        text = msgs[0].get("text", {}).get("body", "")
+                        break
+
+        if sender_id and text:
+            bot_link = db.query(BotLink).filter(
+                BotLink.platform == "WHATSAPP",
+                BotLink.platform_user_id == str(sender_id),
+                BotLink.is_active == True,
+            ).first()
+            if bot_link:
+                res = _process_user_transaction_message(
+                    user=bot_link.user,
+                    raw_text=str(text).strip(),
+                    source="WHATSAPP",
+                    receipt_meta=None,
+                    db=db,
+                )
+                return {"status": "processed", "reply": res.get("message"), "result": res}
+
         return {"status": "received"}
     except Exception as e:
         logger.error("WhatsApp webhook error: %s", e)

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Flame, Calculator, Sparkles, TrendingUp, CheckCircle2, AlertTriangle } from "lucide-react";
 import { getFIREProfile, calculateCustomFIRE } from "@/lib/api";
-import { FIREMetrics, AssetAllocation } from "@/lib/types";
+import { FIREMetrics, AssetAllocation, PortfolioReview } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 
 export default function FIRECalculatorPage() {
@@ -16,6 +16,7 @@ export default function FIRECalculatorPage() {
 
   const [metrics, setMetrics] = useState<FIREMetrics | null>(null);
   const [allocations, setAllocations] = useState<AssetAllocation | null>(null);
+  const [portfolioReview, setPortfolioReview] = useState<PortfolioReview | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   const recalculate = async () => {
@@ -44,6 +45,9 @@ export default function FIRECalculatorPage() {
         setCurrentNetWorth(init.metrics.current_net_worth);
         setMetrics(init.metrics);
         setAllocations(init.allocations);
+        if (init.portfolio_review) {
+          setPortfolioReview(init.portfolio_review);
+        }
       } finally {
         setLoading(false);
       }
@@ -222,31 +226,60 @@ export default function FIRECalculatorPage() {
           {/* Asset Allocation Model */}
           {allocations && (
             <div className="p-6 rounded-3xl bg-card border border-border shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
-                  <h3 className="font-bold text-foreground text-base">Rekomendasi Portofolio Menuju FIRE</h3>
-                  <p className="text-xs text-muted-foreground">Referensi alokasi aset berdasarkan toleransi risiko &amp; horizon investasi</p>
+                  <h3 className="font-bold text-foreground text-base">
+                    Rekomendasi vs Aktual Portofolio Menuju FIRE
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Perbandingan komposisi dompet investasi Anda dengan model referensi ({allocations.profile})
+                  </p>
                 </div>
-                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-accent text-[#8a6300] dark:text-[#f0b000] border border-[#f0b000]/30">
-                  CAGR {allocations.expected_cagr}
-                </span>
+                <div className="flex items-center gap-2">
+                  {portfolioReview && (
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                      Skor Keselarasan: {portfolioReview.alignment_score}/100
+                    </span>
+                  )}
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-accent text-[#8a6300] dark:text-[#f0b000] border border-[#f0b000]/30">
+                    CAGR {allocations.expected_cagr}
+                  </span>
+                </div>
               </div>
 
               <div className="space-y-3 pt-2">
-                {allocations.allocations.map((a, idx) => (
-                  <div key={idx} className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-foreground font-medium">{a.asset}</span>
-                      <span className="text-foreground font-bold">{a.percentage}%</span>
-                    </div>
-                    <div className="w-full bg-secondary h-2 rounded-full overflow-hidden border border-border">
-                      <div
-                        className="h-full rounded-full transition-all duration-300"
-                        style={{ width: `${a.percentage}%`, backgroundColor: a.color }}
-                      />
-                    </div>
-                  </div>
-                ))}
+                {portfolioReview && portfolioReview.allocations_comparison.length > 0
+                  ? portfolioReview.allocations_comparison.map((comp) => (
+                      <div key={comp.asset_class} className="space-y-1.5">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-foreground font-semibold">{comp.asset_class_label}</span>
+                          <span className="text-foreground font-mono">
+                            Aktual: <strong>{comp.actual_pct}%</strong> ({formatCurrency(comp.actual_amount)}) •{" "}
+                            <span className="text-muted-foreground">Target: {comp.target_pct}%</span>
+                          </span>
+                        </div>
+                        <div className="w-full bg-secondary h-2 rounded-full overflow-hidden border border-border">
+                          <div
+                            className="h-full rounded-full transition-all duration-300"
+                            style={{ width: `${Math.min(100, comp.actual_pct)}%`, backgroundColor: comp.color }}
+                          />
+                        </div>
+                      </div>
+                    ))
+                  : allocations.allocations.map((a, idx) => (
+                      <div key={idx} className="space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-foreground font-medium">{a.asset}</span>
+                          <span className="text-foreground font-bold">{a.percentage}%</span>
+                        </div>
+                        <div className="w-full bg-secondary h-2 rounded-full overflow-hidden border border-border">
+                          <div
+                            className="h-full rounded-full transition-all duration-300"
+                            style={{ width: `${a.percentage}%`, backgroundColor: a.color }}
+                          />
+                        </div>
+                      </div>
+                    ))}
               </div>
             </div>
           )}

@@ -13,9 +13,14 @@ import {
   Sparkles,
   Tag,
   Target,
+  TrendingUp,
+  TrendingDown,
+  PiggyBank,
+  Calendar,
 } from "lucide-react";
 import {
   getTransactions,
+  getTransactionSummary,
   getWallets,
   getCategories,
   getBudgets,
@@ -23,11 +28,12 @@ import {
   deleteTransaction,
   createCustomCategory,
 } from "@/lib/api";
-import { Transaction, Wallet, Category, Budget } from "@/lib/types";
+import { Transaction, TransactionSummary, Wallet, Category, Budget } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [summary, setSummary] = useState<TransactionSummary | null>(null);
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [activeBudgets, setActiveBudgets] = useState<Budget[]>([]);
@@ -35,6 +41,10 @@ export default function TransactionsPage() {
   const [loading, setLoading] = useState<boolean>(true);
 
   // Filters
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
   const [selectedType, setSelectedType] = useState<string>("");
   const [selectedWallet, setSelectedWallet] = useState<string>("");
   const [selectedCategory, setSelectedCategory] = useState<string>("");
@@ -58,20 +68,23 @@ export default function TransactionsPage() {
   const refreshData = async () => {
     setLoading(true);
     try {
-      const [txRes, wRes, catRes, bRes] = await Promise.all([
+      const [txRes, sumRes, wRes, catRes, bRes] = await Promise.all([
         getTransactions({
+          month: selectedMonth || undefined,
           type: selectedType || undefined,
           wallet_id: selectedWallet || undefined,
           category_id: selectedCategory || undefined,
           budget_id: selectedBudget || undefined,
           search: search || undefined,
         }),
+        getTransactionSummary(selectedMonth || undefined),
         getWallets(),
         getCategories(),
         getBudgets(),
       ]);
       setTransactions(txRes.items);
       setTotalCount(txRes.total);
+      setSummary(sumRes);
       setWallets(wRes.wallets);
       setCategories(catRes);
       setActiveBudgets(bRes);
@@ -85,7 +98,7 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     refreshData();
-  }, [selectedType, selectedWallet, selectedCategory, selectedBudget, search]);
+  }, [selectedMonth, selectedType, selectedWallet, selectedCategory, selectedBudget, search]);
 
   const handleCreateTx = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,9 +164,9 @@ export default function TransactionsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Daftar Transaksi</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Daftar &amp; Laporan Transaksi</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Semua catatan pemasukan, pengeluaran, dan transfer yang dicatat via Web, Bot Telegram, maupun WhatsApp.
+            Ringkasan pemasukan, pengeluaran, serta catatan mutasi dari Web, Bot Telegram, maupun WhatsApp.
           </p>
         </div>
         <button
@@ -165,9 +178,96 @@ export default function TransactionsPage() {
         </button>
       </div>
 
+      {/* Monthly Reporting Summary Cards */}
+      {summary?.monthly && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="p-5 rounded-2xl bg-card border border-border shadow-sm">
+            <div className="flex items-center justify-between text-xs text-muted-foreground font-medium">
+              <span>Pemasukan ({summary.monthly.month_label})</span>
+              <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-2">
+              +{formatCurrency(summary.monthly.income, "IDR")}
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-1 flex items-center justify-between">
+              <span>Bulan lalu: {formatCurrency(summary.monthly.prev_income, "IDR")}</span>
+              {summary.monthly.income_mom_pct !== null && (
+                <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                  {summary.monthly.income_mom_pct >= 0
+                    ? `+${summary.monthly.income_mom_pct}%`
+                    : `${summary.monthly.income_mom_pct}%`}{" "}
+                  MoM
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="p-5 rounded-2xl bg-card border border-border shadow-sm">
+            <div className="flex items-center justify-between text-xs text-muted-foreground font-medium">
+              <span>Pengeluaran ({summary.monthly.month_label})</span>
+              <TrendingDown className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+            </div>
+            <div className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-2">
+              -{formatCurrency(summary.monthly.expense, "IDR")}
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-1 flex items-center justify-between">
+              <span>Bulan lalu: {formatCurrency(summary.monthly.prev_expense, "IDR")}</span>
+              {summary.monthly.expense_mom_pct !== null && (
+                <span className="font-bold text-rose-600 dark:text-rose-400">
+                  {summary.monthly.expense_mom_pct >= 0
+                    ? `+${summary.monthly.expense_mom_pct}%`
+                    : `${summary.monthly.expense_mom_pct}%`}{" "}
+                  MoM
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="p-5 rounded-2xl bg-card border border-border shadow-sm">
+            <div className="flex items-center justify-between text-xs text-muted-foreground font-medium">
+              <span>Net Cashflow &amp; Savings Rate</span>
+              <PiggyBank className="w-4 h-4 text-[#8a6300] dark:text-[#f0b000]" />
+            </div>
+            <div
+              className={`text-2xl font-bold mt-2 ${
+                summary.monthly.net_cashflow >= 0
+                  ? "text-foreground"
+                  : "text-rose-600 dark:text-rose-400"
+              }`}
+            >
+              {formatCurrency(summary.monthly.net_cashflow, "IDR")}
+            </div>
+            <div className="text-[11px] text-[#8a6300] dark:text-[#f0b000] font-semibold mt-1 flex items-center justify-between">
+              <span>Rasio Tabungan: {summary.monthly.savings_rate}%</span>
+              <span>{summary.monthly.tx_count} transaksi</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Filter Bar */}
       <div className="p-4 rounded-3xl bg-card border border-border shadow-sm flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
+          {/* Month Picker */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-secondary border border-border text-xs">
+            <Calendar className="w-3.5 h-3.5 text-[#8a6300] dark:text-[#f0b000]" />
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="bg-transparent text-foreground font-semibold focus:outline-none"
+            />
+            {selectedMonth && (
+              <button
+                type="button"
+                onClick={() => setSelectedMonth("")}
+                className="text-[10px] text-muted-foreground hover:text-foreground ml-1 underline"
+              >
+                Semua
+              </button>
+            )}
+          </div>
+
           {/* Search */}
           <div className="relative flex-1 min-w-[200px]">
             <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />

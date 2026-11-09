@@ -60,6 +60,7 @@ class User(Base):
     bot_links = relationship("BotLink", back_populates="user", cascade="all, delete-orphan")
     financial_profile = relationship("FinancialProfile", uselist=False, back_populates="user", cascade="all, delete-orphan")
     cfp_chats = relationship("CFPChatMessage", back_populates="user", cascade="all, delete-orphan")
+    account_backups = relationship("AccountBackup", back_populates="user", cascade="all, delete-orphan")
 
 
 class Wallet(Base):
@@ -69,6 +70,7 @@ class Wallet(Base):
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(100), nullable=False)  # e.g., "Mandiri", "Jago", "Danamon", "Cash Dompet"
     type = Column(String(64), default="BANK", nullable=False)  # Preset or custom type e.g. BANK, EWALLET, KANTONG DIGITAL, BANK SYARIAH
+    asset_class = Column(String(32), nullable=True)  # EQUITY, BOND, MONEY_MARKET, GOLD, CRYPTO (for INVESTMENT wallets)
     balance = Column(Float, default=0.0, nullable=False)
     currency = Column(String(8), default="IDR", nullable=False)
     color = Column(String(32), default="#f0b000", nullable=False)
@@ -231,6 +233,20 @@ class CFPChatMessage(Base):
     user = relationship("User", back_populates="cfp_chats")
 
 
+class AccountBackup(Base):
+    __tablename__ = "account_backups"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(160), default="Backup Manual", nullable=False)
+    backup_type = Column(String(32), default="MANUAL", nullable=False)  # "MANUAL" | "AUTO_PRE_RESET"
+    summary_json = Column(Text, default="{}", nullable=False)
+    payload_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=_utc_now, nullable=False)
+
+    user = relationship("User", back_populates="account_backups")
+
+
 # Database engine with resilience for remote server IP
 engine = create_engine(
     _normalize_db_url(settings.DATABASE_URL),
@@ -249,6 +265,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 # Dynamic Schema Migration Registry (Self-healing columns)
 _SCHEMA_MIGRATIONS = {
     ("wallets", "is_archived"): text("ALTER TABLE wallets ADD COLUMN is_archived BOOLEAN DEFAULT FALSE"),
+    ("wallets", "asset_class"): text("ALTER TABLE wallets ADD COLUMN asset_class VARCHAR(32)"),
     ("transactions", "raw_receipt_url"): text("ALTER TABLE transactions ADD COLUMN raw_receipt_url VARCHAR(1024)"),
     ("transactions", "merchant"): text("ALTER TABLE transactions ADD COLUMN merchant VARCHAR(128)"),
     ("transactions", "budget_id"): text("ALTER TABLE transactions ADD COLUMN budget_id VARCHAR(36)"),

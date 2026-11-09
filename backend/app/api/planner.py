@@ -23,6 +23,7 @@ from app.services.fire_engine import (
     calculate_financial_health_score,
     calculate_fire_metrics,
     determine_emergency_target_months,
+    evaluate_investment_portfolio,
     get_asset_allocation_recommendation,
 )
 from app.services.planner_skills_loader import (
@@ -264,11 +265,21 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
         risk_tolerance=context["risk_profile"],
         sharia_preference=context["sharia_preference"],
     )
+    portfolio_review = evaluate_investment_portfolio(
+        wallets=wallets,
+        risk_tolerance=context["risk_profile"],
+        sharia_preference=context["sharia_preference"],
+        liquid_cash_balance=liquid_balance,
+        monthly_expenses=effective_expenses,
+        is_married=is_married,
+        dependents_count=deps,
+    )
     personal_profile = _serialize_personal_profile(profile, completeness)
 
     return {
         "context": context,
         "allocations": allocations,
+        "portfolio_review": portfolio_review,
         "personal_profile": personal_profile,
     }
 

@@ -10,6 +10,9 @@ export interface Wallet {
   id: string;
   name: string;
   type: string; // Custom or preset e.g. BANK, EWALLET, CASH, KANTONG DIGITAL, BANK SYARIAH, INVESTMENT, CREDIT
+  asset_class?: "EQUITY" | "BOND" | "MONEY_MARKET" | "GOLD" | "CRYPTO" | string | null;
+  asset_class_label?: string | null;
+  is_investment?: boolean;
   balance: number;
   currency: string;
   color: string;
@@ -26,6 +29,56 @@ export interface Wallet {
   shortfall_amount?: number;
   funding_status?: "FUNDED" | "SHORTFALL" | "IDLE";
   assigned_items_count?: number;
+}
+
+export interface PortfolioAllocationComparison {
+  asset_class: string;
+  asset_class_label: string;
+  reference_name: string;
+  color: string;
+  actual_amount: number;
+  ideal_amount: number;
+  delta_amount: number;
+  actual_pct: number;
+  target_pct: number;
+  drift_pct: number;
+  action: "IDEAL" | "UNDERWEIGHT" | "OVERWEIGHT";
+  status_text: string;
+}
+
+export interface PortfolioBestPracticeItem {
+  key: string;
+  title: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface PortfolioReview {
+  has_investment_wallets: boolean;
+  investment_wallets_count: number;
+  investment_wallets: Array<{
+    id: string;
+    name: string;
+    type: string;
+    balance: number;
+    asset_class: string;
+    asset_class_label: string;
+  }>;
+  total_investment_balance: number;
+  liquid_cash_balance: number;
+  total_net_worth: number;
+  invested_ratio_pct: number;
+  risk_profile: string;
+  sharia_preference: boolean;
+  reference_profile_name: string;
+  reference_description: string;
+  expected_cagr: string;
+  alignment_score: number;
+  status: "OPTIMAL" | "PERLU_REBALANCING" | "PERINGATAN_RISIKO" | "BELUM_ADA_INVESTASI";
+  status_label: string;
+  allocations_comparison: PortfolioAllocationComparison[];
+  best_practices: PortfolioBestPracticeItem[];
+  recommendations: string[];
 }
 
 export interface Category {
@@ -149,12 +202,82 @@ export interface MonthlyAllocationResponse {
   };
 }
 
+export interface MonthlyTrendItem {
+  month_key: string;
+  label: string;
+  full_label: string;
+  income: number;
+  expense: number;
+  net_cashflow: number;
+  savings_rate: number;
+  tx_count: number;
+}
+
+export interface CategorySummaryItem {
+  name: string;
+  color: string;
+  total: number;
+  percentage?: number;
+  count?: number;
+}
+
+export interface WalletCashflowItem {
+  wallet_id: string;
+  wallet_name: string;
+  wallet_color: string;
+  wallet_type: string;
+  current_balance: number;
+  income: number;
+  expense: number;
+  transfer_in: number;
+  transfer_out: number;
+  net_cashflow: number;
+  tx_count: number;
+}
+
+export interface MonthlyTransactionMetrics {
+  month_key: string;
+  month_label: string;
+  income: number;
+  expense: number;
+  transfer_volume: number;
+  net_cashflow: number;
+  savings_rate: number;
+  tx_count: number;
+  prev_month_key: string;
+  prev_income: number;
+  prev_expense: number;
+  income_mom_pct: number;
+  expense_mom_pct: number;
+}
+
 export interface TransactionSummary {
-  currency: string;
+  currency?: string;
   total_income: number;
   total_expense: number;
   net_savings: number;
-  category_breakdown: Array<{ name: string; color: string; total: number }>;
+  categories?: Array<{ name: string; color: string; total: number }>;
+  category_breakdown?: Array<{ name: string; color: string; total: number }>;
+  month_key?: string;
+  month_label?: string;
+  monthly?: MonthlyTransactionMetrics;
+  monthly_trend?: MonthlyTrendItem[];
+  expense_categories?: CategorySummaryItem[];
+  income_categories?: CategorySummaryItem[];
+  wallet_breakdown?: WalletCashflowItem[];
+}
+
+export interface AccountBackupItem {
+  id: string;
+  title: string;
+  backup_type: "MANUAL" | "AUTO_PRE_RESET" | string;
+  summary: {
+    wallets_count?: number;
+    total_balance?: number;
+    transactions_count?: number;
+    budgets_count?: number;
+  };
+  created_at: string;
 }
 
 export interface BotPlatformStatus {

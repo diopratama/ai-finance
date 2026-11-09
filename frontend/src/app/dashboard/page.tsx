@@ -13,6 +13,12 @@ import {
   Bot,
   Sparkles,
   Target,
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
+  Calendar,
+  CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 import {
   getWallets,
@@ -29,12 +35,29 @@ import {
   FIREMetrics,
   PlannerHealthContext,
   MonthlyAllocationResponse,
+  PortfolioReview,
 } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
+function shiftMonthKey(mk: string, delta: number): string {
+  const parts = mk.split("-");
+  if (parts.length !== 2) return mk;
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  const total = y * 12 + (m - 1) + delta;
+  const ny = Math.floor(total / 12);
+  const nm = (total % 12) + 1;
+  return `${ny}-${String(nm).padStart(2, "0")}`;
+}
+
 export default function DashboardOverviewPage() {
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [totalBalance, setTotalBalance] = useState<number>(0);
+  const [portfolioReview, setPortfolioReview] = useState<PortfolioReview | null>(null);
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [fireMetrics, setFireMetrics] = useState<FIREMetrics | null>(null);
@@ -45,15 +68,18 @@ export default function DashboardOverviewPage() {
     async function loadData() {
       try {
         const [wRes, txRes, sumRes, fireRes, healthRes, allocRes] = await Promise.all([
-          getWallets(),
-          getTransactions({ limit: 5 }),
-          getTransactionSummary(),
+          getWallets(selectedMonth),
+          getTransactions({ limit: 6, month: selectedMonth }),
+          getTransactionSummary(selectedMonth),
           getFIREProfile(),
           getPlannerOverview(),
-          getBudgetAllocation().catch(() => null),
+          getBudgetAllocation(selectedMonth).catch(() => null),
         ]);
         setWallets(wRes.wallets);
         setTotalBalance(wRes.total_balance);
+        if (wRes.portfolio_review) {
+          setPortfolioReview(wRes.portfolio_review);
+        }
         setRecentTransactions(txRes.items);
         setSummary(sumRes);
         setFireMetrics(fireRes.metrics);
@@ -64,7 +90,14 @@ export default function DashboardOverviewPage() {
       }
     }
     loadData();
-  }, []);
+  }, [selectedMonth]);
+
+  const monthly = summary?.monthly;
+  const trendList = summary?.monthly_trend || [];
+  const maxTrendVal = Math.max(
+    1,
+    ...trendList.map((t) => Math.max(t.income || 0, t.expense || 0))
+  );
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
@@ -73,10 +106,34 @@ export default function DashboardOverviewPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Dashboard Finansial</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Ringkasan kekayaan bersih, alokasi gajian per dompet, dan peta jalan menuju Financial Freedom.
+            Ringkasan kekayaan bersih, laporan arus kas bulanan, evaluasi portofolio investasi, dan progres FIRE.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Month Selector */}
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-card border border-border shadow-sm">
+            <button
+              type="button"
+              onClick={() => setSelectedMonth((m) => shiftMonthKey(m, -1))}
+              className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+              title="Bulan Sebelumnya"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold text-foreground">
+              <Calendar className="w-3.5 h-3.5 text-[#8a6300] dark:text-[#f0b000]" />
+              <span>{monthly?.month_label || selectedMonth}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedMonth((m) => shiftMonthKey(m, 1))}
+              className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+              title="Bulan Berikutnya"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
           <Link
             href="/budgets"
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-card border border-border hover:bg-accent text-foreground transition-colors"
@@ -120,52 +177,316 @@ export default function DashboardOverviewPage() {
           </div>
         </div>
 
-        {/* Total Income */}
+        {/* Monthly Income */}
         <div className="p-5 rounded-2xl bg-card border border-border shadow-sm">
           <div className="flex items-center justify-between text-muted-foreground text-xs font-medium">
-            <span>Pemasukan Terdata</span>
+            <span>Pemasukan ({monthly?.month_label || selectedMonth})</span>
             <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
               <TrendingUp className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-3">
-            +{formatCurrency(summary?.total_income || 0, "IDR")}
+            +{formatCurrency(monthly ? monthly.income : summary?.total_income || 0, "IDR")}
           </div>
-          <div className="text-[11px] text-muted-foreground mt-2">Gaji & pendapatan lainnya</div>
+          <div className="text-[11px] text-muted-foreground mt-2 flex items-center justify-between">
+            <span>Total historis: {formatCurrency(summary?.total_income || 0, "IDR")}</span>
+            {monthly?.income_mom_pct !== null && monthly?.income_mom_pct !== undefined && (
+              <span
+                className={`font-bold ${
+                  monthly.income_mom_pct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"
+                }`}
+              >
+                {monthly.income_mom_pct >= 0 ? `+${monthly.income_mom_pct}%` : `${monthly.income_mom_pct}%`} MoM
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Total Expense */}
+        {/* Monthly Expense */}
         <div className="p-5 rounded-2xl bg-card border border-border shadow-sm">
           <div className="flex items-center justify-between text-muted-foreground text-xs font-medium">
-            <span>Pengeluaran Terdata</span>
+            <span>Pengeluaran ({monthly?.month_label || selectedMonth})</span>
             <div className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
               <TrendingDown className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-3">
-            -{formatCurrency(summary?.total_expense || 0, "IDR")}
+            -{formatCurrency(monthly ? monthly.expense : summary?.total_expense || 0, "IDR")}
           </div>
-          <div className="text-[11px] text-muted-foreground mt-2">Termasuk log WhatsApp & Telegram</div>
+          <div className="text-[11px] text-muted-foreground mt-2 flex items-center justify-between">
+            <span>Total historis: {formatCurrency(summary?.total_expense || 0, "IDR")}</span>
+            {monthly?.expense_mom_pct !== null && monthly?.expense_mom_pct !== undefined && (
+              <span
+                className={`font-bold ${
+                  monthly.expense_mom_pct <= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"
+                }`}
+              >
+                {monthly.expense_mom_pct >= 0 ? `+${monthly.expense_mom_pct}%` : `${monthly.expense_mom_pct}%`} MoM
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Monthly Budget Allocation Status */}
+        {/* Monthly Net Cashflow & Savings Rate */}
         <div className="p-5 rounded-2xl bg-card border border-border shadow-sm">
           <div className="flex items-center justify-between text-muted-foreground text-xs font-medium">
-            <span>Alokasi Bulan Ini ({allocation?.month_key || "Aktif"})</span>
+            <span>Net Cashflow &amp; Savings Rate</span>
             <div className="w-8 h-8 rounded-lg bg-accent text-[#8a6300] dark:text-[#f0b000] flex items-center justify-center">
               <PiggyBank className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-bold text-foreground mt-3">
-            {formatCurrency(allocation?.totals.total_budget || summary?.net_savings || 0, "IDR")}
+          <div
+            className={`text-2xl font-bold mt-3 ${
+              (monthly?.net_cashflow ?? summary?.net_savings ?? 0) >= 0
+                ? "text-foreground"
+                : "text-rose-600 dark:text-rose-400"
+            }`}
+          >
+            {formatCurrency(monthly ? monthly.net_cashflow : summary?.net_savings || 0, "IDR")}
           </div>
-          <div className="text-[11px] text-[#8a6300] dark:text-[#f0b000] mt-2 font-semibold">
-            {allocation && allocation.totals.items_count > 0
-              ? `${allocation.totals.items_count} pos aktif (${allocation.totals.allocated_percentage}% gaji)`
-              : "Klik Alokasi Gajian untuk menyusun pos"}
+          <div className="text-[11px] text-[#8a6300] dark:text-[#f0b000] mt-2 font-semibold flex items-center justify-between">
+            <span>Rasio Tabungan: {monthly ? `${monthly.savings_rate}%` : "0%"}</span>
+            <span>{monthly?.tx_count || 0} transaksi</span>
           </div>
         </div>
       </div>
+
+      {/* Monthly Reporting Summary Section (6-Month Cashflow Trend + Category Breakdown) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 6-Month Cashflow Trend Bar Chart */}
+        <div className="lg:col-span-2 p-6 rounded-2xl bg-card border border-border shadow-sm space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-accent text-[#8a6300] dark:text-[#f0b000] flex items-center justify-center">
+                <BarChart3 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-foreground">
+                  Laporan Tren Arus Kas 6 Bulan Terakhir
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Perbandingan pemasukan vs pengeluaran bulanan dan rasio tabungan
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-[11px] font-semibold">
+              <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />
+                Pemasukan
+              </span>
+              <span className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
+                <span className="w-2.5 h-2.5 rounded-sm bg-rose-500" />
+                Pengeluaran
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-6 gap-3 pt-4 items-end h-44 border-b border-border pb-3">
+            {trendList.map((item) => {
+              const incHeight = Math.max(4, Math.round(((item.income || 0) / maxTrendVal) * 120));
+              const expHeight = Math.max(4, Math.round(((item.expense || 0) / maxTrendVal) * 120));
+              const isSelected = item.month_key === selectedMonth;
+              return (
+                <button
+                  key={item.month_key}
+                  type="button"
+                  onClick={() => setSelectedMonth(item.month_key)}
+                  className={`flex flex-col items-center gap-2 p-2 rounded-xl transition-all ${
+                    isSelected
+                      ? "bg-accent/70 ring-1 ring-[#f0b000]/50"
+                      : "hover:bg-secondary/60"
+                  }`}
+                  title={`${item.label}: Masuk ${formatCurrency(item.income)} | Keluar ${formatCurrency(item.expense)}`}
+                >
+                  <div className="flex items-end justify-center gap-1.5 h-32 w-full">
+                    <div
+                      className="w-3 sm:w-4 rounded-t-md bg-emerald-500 transition-all duration-300"
+                      style={{ height: `${incHeight}px` }}
+                    />
+                    <div
+                      className="w-3 sm:w-4 rounded-t-md bg-rose-500 transition-all duration-300"
+                      style={{ height: `${expHeight}px` }}
+                    />
+                  </div>
+                  <div className="text-[11px] font-bold text-foreground">{item.label}</div>
+                  <div
+                    className={`text-[10px] font-semibold ${
+                      item.savings_rate >= 20
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : item.savings_rate >= 0
+                        ? "text-[#8a6300] dark:text-[#f0b000]"
+                        : "text-rose-500"
+                    }`}
+                  >
+                    {item.savings_rate}% SR
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Wallet Cashflow Breakdown for Selected Month */}
+          {summary?.wallet_breakdown && summary.wallet_breakdown.length > 0 && (
+            <div className="space-y-2 pt-1">
+              <div className="text-xs font-bold text-foreground">
+                Mutasi Arus Kas per Dompet ({monthly?.month_label || selectedMonth})
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {summary.wallet_breakdown.slice(0, 4).map((wb) => (
+                  <div
+                    key={wb.wallet_id}
+                    className="p-2.5 rounded-xl bg-secondary/50 border border-border flex items-center justify-between text-xs"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: wb.wallet_color }}
+                      />
+                      <span className="font-semibold text-foreground">{wb.wallet_name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 font-mono text-[11px]">
+                      <span className="text-emerald-600 dark:text-emerald-400">
+                        +{formatCurrency(wb.income)}
+                      </span>
+                      <span className="text-muted-foreground">/</span>
+                      <span className="text-rose-600 dark:text-rose-400">
+                        -{formatCurrency(wb.expense)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Monthly Expense Category Breakdown */}
+        <div className="p-6 rounded-2xl bg-card border border-border shadow-sm flex flex-col justify-between space-y-4">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-foreground">Distribusi Pengeluaran</h3>
+                <p className="text-xs text-muted-foreground">
+                  Periode {monthly?.month_label || selectedMonth}
+                </p>
+              </div>
+              <Link
+                href="/transactions"
+                className="text-xs font-semibold text-[#8a6300] dark:text-[#f0b000] hover:underline"
+              >
+                Detail
+              </Link>
+            </div>
+
+            {(!summary?.expense_categories || summary.expense_categories.length === 0) ? (
+              <div className="py-10 text-center text-xs text-muted-foreground">
+                Belum ada pengeluaran tercatat pada periode {monthly?.month_label || selectedMonth}.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {summary.expense_categories.slice(0, 6).map((cat, idx) => (
+                  <div key={idx} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-foreground flex items-center gap-1.5">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: cat.color || "#f0b000" }}
+                        />
+                        <span>{cat.name}</span>
+                      </span>
+                      <span className="font-mono font-bold text-foreground">
+                        {formatCurrency(cat.total)}{" "}
+                        <span className="text-muted-foreground font-normal">({cat.percentage}%)</span>
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-secondary overflow-hidden border border-border">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${Math.min(100, Math.max(4, cat.percentage || 0))}%`,
+                          backgroundColor: cat.color || "#f0b000",
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="pt-3 border-t border-border flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">Total Pengeluaran Bulan Ini:</span>
+            <span className="font-bold text-rose-600 dark:text-rose-400">
+              {formatCurrency(monthly?.expense || 0, "IDR")}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Investment Portfolio Review & Best Practice Summary Card */}
+      {portfolioReview && (
+        <div className="p-6 rounded-2xl bg-card border border-border shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                <TrendingUp className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-bold text-foreground">
+                    Review Portofolio Investasi vs Best Practice ({portfolioReview.reference_profile_name})
+                  </h3>
+                  <span
+                    className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${
+                      portfolioReview.status === "OPTIMAL"
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                        : portfolioReview.status === "PERLU_REBALANCING"
+                        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                        : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                    }`}
+                  >
+                    {portfolioReview.status_label} • Skor {portfolioReview.alignment_score}/100
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Total Aset Investasi:{" "}
+                  <strong className="text-foreground">
+                    {formatCurrency(portfolioReview.total_investment_balance, "IDR")}
+                  </strong>{" "}
+                  ({portfolioReview.invested_ratio_pct}% dari kekayaan bersih • Target Return{" "}
+                  {portfolioReview.expected_cagr})
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/wallets"
+              className="text-xs font-bold text-[#8a6300] dark:text-[#f0b000] hover:underline flex items-center gap-1 self-start sm:self-center"
+            >
+              <span>Lihat Detail &amp; Rebalancing</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            {portfolioReview.best_practices.slice(0, 2).map((chk) => (
+              <div
+                key={chk.key}
+                className="p-3 rounded-xl bg-secondary/50 border border-border flex items-start gap-2.5 text-xs"
+              >
+                {chk.passed ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <div className="font-bold text-foreground">{chk.title}</div>
+                  <div className="text-muted-foreground text-[11px] mt-0.5">{chk.detail}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Middle Section: Financial Health & FIRE Progress */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -224,9 +224,12 @@ export default function BotPairingPage() {
           <div className="flex flex-wrap gap-2">
             {[
               { label: "⛽ Isi Bensin 250rb (Auto-Danamon)", text: "isi bensin 250rb", src: "WHATSAPP" },
-              { label: "💧 Bayar PDAM 250k (Auto-Jago)", text: "bayar pdam 250k", src: "TELEGRAM" },
-              { label: "☕ Kopi Kenangan 28rb pake GoPay", text: "beli kopi kenangan 28rb pake gopay", src: "TELEGRAM" },
-              { label: "💰 Gaji Masuk 15jt ke BCA", text: "gaji masuk 15jt ke bca", src: "WHATSAPP" },
+              { label: "🔄 Topup GoPay 100rb dari BCA", text: "topup gopay 100rb dari bca", src: "WHATSAPP" },
+              { label: "📈 Transfer 1jt dari Mandiri ke Bibit", text: "transfer 1jt dari mandiri ke bibit", src: "TELEGRAM" },
+              { label: "➕ Tambah Saldo Bibit 500rb", text: "tambah saldo bibit 500rb", src: "TELEGRAM" },
+              { label: "➖ Tarik Dana Jago 200rb", text: "tarik dana jago 200rb", src: "WHATSAPP" },
+              { label: "📊 /laporan (Ringkasan Bulanan)", text: "/laporan", src: "TELEGRAM" },
+              { label: "💼 /portofolio (Review Investasi)", text: "/portofolio", src: "TELEGRAM" },
             ].map((p, idx) => (
               <button
                 key={idx}
