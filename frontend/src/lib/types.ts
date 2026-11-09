@@ -173,12 +173,77 @@ export interface InvestmentRecommendation {
   key_monitoring_metrics?: string[];
 }
 
+export type AnalysisType = "analyze" | "recommend";
+export type ChatMode = "standard" | "deep_validation";
+
+export interface RankedCandidate {
+  symbol: string;
+  name?: string;
+  price: number;
+  change_pct?: number;
+  score: number;
+  rsi?: number;
+  macd?: number;
+  sma20?: number;
+  sma50?: number;
+  stance?: "BUY" | "ACCUMULATE" | "HOLD" | "TAKE_PROFIT" | "AVOID" | string;
+  confidence?: number;
+  confidence_basis?: string;
+  sharia_status?: string;
+  issi_status?: string;
+  target_price_1?: number;
+  target_price_2?: number;
+  target_price_3?: number;
+  support_level?: number;
+  resistance_level?: number;
+  atr_levels?: Record<string, any>;
+  thesis_summary?: string;
+}
+
+export interface RecommendationResult {
+  type: "recommendation";
+  market: string;
+  report: string;
+  agent_reports: Record<string, string>;
+  symbols_scanned: number;
+  exa_news_count: number;
+  status: string;
+  ranked_candidates: RankedCandidate[];
+  sharia_status?: string;
+}
+
+export interface ValidationLiveSnapshot {
+  symbol: string;
+  price?: string | number;
+  drift_pct?: number;
+  rsi_1d?: number;
+  macd_1d?: string;
+  rsi_1h?: number;
+  macd_1h?: string;
+  flags?: string[];
+  provider?: string;
+}
+
+export interface ValidationMeta {
+  validated_symbols: string[];
+  checked_sources: string[];
+  live_snapshots: ValidationLiveSnapshot[];
+  discrepancy_flags: string[];
+}
+
+export interface InvestmentChatResponse {
+  reply: string;
+  mode: ChatMode;
+  validation_meta?: ValidationMeta | null;
+}
+
 export interface InvestmentSwarmResult {
   symbol: string;
   market: string;
   timestamp: string;
   analyst_reports: Record<string, string>;
-  investment_recommendation: InvestmentRecommendation;
+  investment_recommendation?: InvestmentRecommendation;
+  recommendation_result?: RecommendationResult;
   news_sources?: Array<{
     title: string;
     url: string;

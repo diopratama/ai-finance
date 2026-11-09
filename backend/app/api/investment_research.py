@@ -5,17 +5,18 @@ import queue
 import threading
 import uuid
 from typing import Any, Dict, List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.db import (
     FinancialProfile,
     InvestmentAnalysisHistory,
+    Transaction,
     User,
     Wallet,
     get_accessible_wallets,
@@ -23,7 +24,7 @@ from app.db import (
     SessionLocal,
 )
 from app.services.fire_engine import is_investment_wallet
-from app.services.market_rates_service import convert_to_idr
+from app.services.market_rates_service import convert_to_idr, fetch_live_market_rates
 from app.investment_ai.market_data import get_market_quote
 from app.investment_ai.sharia_reference import load_sharia_reference
 from app.investment_ai.orchestrator import (
@@ -31,6 +32,7 @@ from app.investment_ai.orchestrator import (
     chat_with_investment_agent,
     register_stop_event,
     run_investment_swarm_pipeline,
+    run_recommendation_pipeline,
     trigger_stop_event,
     unregister_stop_event,
 )
@@ -42,7 +44,8 @@ router = APIRouter(prefix="/investment", tags=["Investment Research & Multi-Agen
 
 class RunInvestmentSwarmRequest(BaseModel):
     market: str
-    symbol: str
+    symbol: Optional[str] = ""
+    analysis_type: Optional[str] = Field("analyze", pattern="^(analyze|recommend)$")
     horizon: Optional[str] = "ALL"  # ALL | SHORT | MEDIUM | LONG
     locale: Optional[str] = "id"
 
@@ -52,25 +55,29 @@ class StopInvestmentTaskRequest(BaseModel):
 
 
 class InvestmentChatRequest(BaseModel):
-    symbol: str
-    market: str
-    history: List[Dict[str, str]]
-    analysis_context: Dict[str, Any]
+    symbol: Optional[str] = ""
+    market: Optional[str] = "ihsg"
+    message: str = ""
+    mode: Optional[str] = "standard"  # standard | deep_validation
+    locale: Optional[str] = "id"
+    history: List[Dict[str, str]] = []
+    analysis_context: Dict[str, Any] = {}
 
 
 def _build_user_profile_context(user: User, db: Session) -> Dict[str, Any]:
     profile = db.query(FinancialProfile).filter(FinancialProfile.user_id == user.id).first()
     wallets = get_accessible_wallets(db, user.id, min_role="VIEWER")
+    rates = fetch_live_market_rates()
 
     liquid_cash = sum(
-        max(0.0, convert_to_idr(w.balance, w.currency))
+        max(0.0, convert_to_idr(w.balance, getattr(w, "currency", "IDR") or "IDR", rates))
         for w in wallets
         if not is_investment_wallet(w.name, w.type, getattr(w, "asset_class", None))
         and not any(k in (w.type or "").upper() for k in ("CREDIT", "KREDIT", "PAYLATER", "LOAN", "UTANG", "HUTANG", "CC"))
     )
 
     invest_val = sum(
-        max(0.0, convert_to_idr(w.balance, w.currency))
+        max(0.0, convert_to_idr(w.balance, getattr(w, "currency", "IDR") or "IDR", rates))
         for w in wallets
         if is_investment_wallet(w.name, w.type, getattr(w, "asset_class", None))
     )
@@ -79,11 +86,31 @@ def _build_user_profile_context(user: User, db: Session) -> Dict[str, Any]:
     risk_tol = profile.risk_tolerance if profile and profile.risk_tolerance else "MODERATE"
     sharia_pref = bool(profile.sharia_preference) if profile else False
 
+    # Compute actual monthly surplus from recent income transactions or profile
+    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    recent_incomes = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == user.id,
+            Transaction.type == "INCOME",
+            Transaction.transaction_date >= thirty_days_ago,
+        )
+        .all()
+    )
+    income_val = sum(convert_to_idr(t.amount, getattr(t, "currency", "IDR") or "IDR", rates) for t in recent_incomes)
+    if income_val <= 0 and profile and profile.monthly_income:
+        income_val = float(profile.monthly_income)
+    if income_val <= 0:
+        income_val = monthly_exp * 1.25
+
+    surplus_val = max(0.0, income_val - monthly_exp)
+
     return {
         "liquid_cash_balance": liquid_cash,
         "total_investment_balance": invest_val,
         "monthly_expenses": monthly_exp,
-        "monthly_surplus": max(0.0, monthly_exp * 0.25),  # default indicative surplus
+        "monthly_income": income_val,
+        "monthly_surplus": surplus_val,
         "risk_tolerance": risk_tol,
         "sharia_preference": sharia_pref,
     }
@@ -135,7 +162,7 @@ def list_sharia_stocks(
             "source_as_of": ref.get("source_as_of"),
             "valid_until": ref.get("valid_until"),
             "counts": ref.get("counts"),
-            "issuers": issuers[:150],  # limit response size for fast rendering
+            "issuers": issuers[:150],
         }
     except Exception as e:
         logger.error("Failed to load sharia reference: %s", e)
@@ -158,14 +185,17 @@ def chat_with_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Answers user inquiries regarding the generated investment research report."""
+    """Answers user inquiries or performs deep validation audits on the investment findings."""
     user_prof = _build_user_profile_context(current_user, db)
     ans = chat_with_investment_agent(
         history=req.history,
         analysis_context=req.analysis_context,
+        user_message=req.message,
+        mode=req.mode or "standard",
+        locale=req.locale or "id",
         user_profile=user_prof,
     )
-    return {"response": ans}
+    return {"success": True, **ans}
 
 
 @router.get("/history")
@@ -187,9 +217,11 @@ def list_history(
             "run_id": r.run_id,
             "market": r.market,
             "symbol": r.symbol,
+            "analysis_type": r.analysis_type,
             "investment_horizon": r.investment_horizon,
             "decision": r.decision,
             "confidence": r.confidence,
+            "symbols_scanned": r.symbols_scanned,
             "status": r.status,
             "report_preview": r.report_preview,
             "exa_news_count": r.exa_news_count,
@@ -228,9 +260,11 @@ def get_history_detail(
         "run_id": record.run_id,
         "market": record.market,
         "symbol": record.symbol,
+        "analysis_type": record.analysis_type,
         "investment_horizon": record.investment_horizon,
         "decision": record.decision,
         "confidence": record.confidence,
+        "symbols_scanned": record.symbols_scanned,
         "status": record.status,
         "created_at": record.created_at.isoformat() if record.created_at else None,
         "result": result_data,
@@ -267,10 +301,14 @@ def run_investment_swarm(
 ):
     """
     Launches multi-agent investment research and streams SSE events.
-    Persists final recommendation to InvestmentAnalysisHistory on completion.
+    Supports:
+    - analysis_type="analyze": Deep single-asset investment research
+    - analysis_type="recommend": Multi-asset market opportunity scanner
+    Persists final result to InvestmentAnalysisHistory on completion.
     """
     market = req.market.strip().lower()
-    symbol = req.symbol.strip().upper()
+    analysis_type = (req.analysis_type or "analyze").strip().lower()
+    symbol = (req.symbol or "").strip().upper()
     horizon = (req.horizon or "ALL").strip().upper()
     task_id = str(uuid.uuid4())
     stop_event = register_stop_event(task_id)
@@ -286,32 +324,45 @@ def run_investment_swarm(
 
         def worker():
             try:
-                final_res = run_investment_swarm_pipeline(
-                    market=market,
-                    symbol=symbol,
-                    user_profile=user_profile,
-                    event_callback=queue_emit,
-                    stop_event=stop_event,
-                    locale=req.locale or "id",
-                )
+                if analysis_type == "recommend":
+                    final_res = run_recommendation_pipeline(
+                        market=market,
+                        event_callback=queue_emit,
+                        stop_event=stop_event,
+                        locale=req.locale or "id",
+                        user_profile=user_profile,
+                    )
+                else:
+                    final_res = run_investment_swarm_pipeline(
+                        market=market,
+                        symbol=symbol,
+                        user_profile=user_profile,
+                        event_callback=queue_emit,
+                        stop_event=stop_event,
+                        locale=req.locale or "id",
+                    )
 
                 # Persist to DB on success
                 with SessionLocal() as worker_db:
                     rec = final_res.get("investment_recommendation") or {}
                     news_list = final_res.get("news_sources") or []
+                    symbols_scanned = final_res.get("symbols_scanned", 1 if analysis_type == "analyze" else 0)
+                    preview_text = final_res.get("report") if analysis_type == "recommend" else rec.get("executive_thesis", "")
+
                     history_row = InvestmentAnalysisHistory(
                         id=str(uuid.uuid4()),
                         user_id=user_id,
                         run_id=task_id,
                         market=market,
-                        analysis_type="analyze",
+                        analysis_type=analysis_type,
                         investment_horizon=horizon,
                         symbol=symbol,
                         status="completed",
-                        decision=rec.get("stance", "HOLD"),
-                        confidence=float(rec.get("confidence_pct", 0)),
-                        exa_news_count=len(news_list),
-                        report_preview=rec.get("executive_thesis", "")[:500],
+                        decision=rec.get("stance", "HOLD") if analysis_type == "analyze" else None,
+                        confidence=float(rec.get("confidence_pct", 0)) if rec.get("confidence_pct") is not None else None,
+                        symbols_scanned=symbols_scanned,
+                        exa_news_count=final_res.get("exa_news_count", len(news_list)),
+                        report_preview=(preview_text or "")[:500],
                         input_json=json.dumps(req.model_dump()),
                         result_json=json.dumps(final_res),
                     )
@@ -344,6 +395,7 @@ def run_investment_swarm(
             "type": "task_init",
             "task_id": task_id,
             "market": market,
+            "analysis_type": analysis_type,
             "symbol": symbol,
             "horizon": horizon,
         }
@@ -356,7 +408,6 @@ def run_investment_swarm(
                     break
                 yield f"data: {json.dumps(item)}\n\n"
             except queue.Empty:
-                # Keep-alive heartbeat comment
                 yield ": ping\n\n"
 
     return StreamingResponse(

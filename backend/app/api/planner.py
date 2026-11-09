@@ -18,6 +18,7 @@ from app.db import (
     User,
     Wallet,
     get_db,
+    get_accessible_wallets,
 )
 from app.services.fire_engine import (
     calculate_financial_health_score,
@@ -111,7 +112,7 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
 
     live_rates = fetch_live_market_rates()
 
-    wallets = db.query(Wallet).filter(Wallet.user_id == user.id, Wallet.is_archived == False).all()
+    wallets = get_accessible_wallets(db, user.id, min_role="VIEWER")
     total_wallet_balance = sum(convert_to_idr(w.balance, w.currency, live_rates) for w in wallets)
     liquid_balance = sum(
         convert_to_idr(w.balance, w.currency, live_rates)
@@ -283,9 +284,20 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
         "age_confirmation_label": "TERKONFIRMASI USER" if flags["age_ready"] else "BELUM DIKONFIRMASI USER — default",
     }
 
+    user_strategy = getattr(profile, "portfolio_strategy", None)
+    custom_raw = getattr(profile, "custom_allocations_json", None)
+    user_custom_alloc = None
+    if custom_raw:
+        try:
+            user_custom_alloc = json.loads(custom_raw)
+        except Exception:
+            user_custom_alloc = None
+
     allocations = get_asset_allocation_recommendation(
         risk_tolerance=context["risk_profile"],
         sharia_preference=context["sharia_preference"],
+        strategy=user_strategy,
+        custom_allocations=user_custom_alloc,
     )
     portfolio_review = evaluate_investment_portfolio(
         wallets=wallets,
@@ -295,6 +307,8 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
         monthly_expenses=effective_expenses,
         is_married=is_married,
         dependents_count=deps,
+        strategy=user_strategy,
+        custom_allocations=user_custom_alloc,
     )
     personal_profile = _serialize_personal_profile(profile, completeness)
 

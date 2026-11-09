@@ -24,6 +24,7 @@ from app.services.fire_engine import (
     is_investment_wallet,
 )
 from app.services.market_rates_service import (
+    convert_between_currencies,
     convert_to_idr,
     fetch_live_market_rates,
     format_currency_with_base,
@@ -361,8 +362,13 @@ def transfer_between_wallets(req: TransferRequest, current_user: User = Depends(
     if from_w.id == to_w.id:
         raise HTTPException(status_code=400, detail="Dompet sumber dan tujuan tidak boleh sama")
 
+    rates = fetch_live_market_rates()
+    from_currency = from_w.currency or "IDR"
+    to_currency = to_w.currency or "IDR"
+    received_amount = convert_between_currencies(req.amount, from_currency, to_currency, rates)
+
     from_w.balance -= req.amount
-    to_w.balance += req.amount
+    to_w.balance += received_amount
 
     tx = Transaction(
         user_id=current_user.id,
@@ -370,14 +376,14 @@ def transfer_between_wallets(req: TransferRequest, current_user: User = Depends(
         to_wallet_id=to_w.id,
         type="TRANSFER",
         amount=req.amount,
-        currency=from_w.currency,
-        amount_in_base=req.amount,
+        currency=from_currency,
+        amount_in_base=convert_to_idr(req.amount, from_currency, rates),
         description=req.description or f"Transfer dari {from_w.name} ke {to_w.name}",
         raw_source="WEB",
     )
     db.add(tx)
     db.commit()
-    return {"message": "Transfer berhasil dilakukan", "tx_id": tx.id}
+    return {"message": "Transfer berhasil dilakukan", "tx_id": tx.id, "received_amount": received_amount, "to_currency": to_currency}
 
 
 # ==================== WALLET MEMBERS (SHARING) ====================

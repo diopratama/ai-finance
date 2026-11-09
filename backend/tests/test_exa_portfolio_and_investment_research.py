@@ -122,3 +122,4 @@ def test_orchestrator_market_and_json_helpers():
     assert parsed is not None
     assert parsed["stance"] == "ACCUMULATE"
     assert parsed["confidence_pct"] == 85
+

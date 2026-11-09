@@ -27,12 +27,13 @@ from app.services.fire_engine import ASSET_CLASS_LABELS, infer_wallet_asset_clas
 from app.services.market_rates_service import (
     fetch_live_market_rates,
     convert_to_idr,
+    convert_between_currencies,
     format_currency_with_base,
     format_currency_display_string,
 )
 from app.services.nlu_parser import match_budget_item_from_text, parse_transaction_text
 from app.services.router_service import router_service
-from app.auth import get_optional_user
+from app.auth import get_optional_user, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["Webhooks & Bot Drivers"])
@@ -79,8 +80,10 @@ def _format_bot_wallets_reply(user: User, db: Session) -> str:
         else:
             lines.append(f"• {icon} {w.name}{badge_str}: {_fmt_rp(w.balance)}")
 
+    usd_rate = rates.get("usd_to_idr") or rates.get("usd_idr") or 16850.0
+    gold_rate = rates.get("gold_per_gram_idr") or rates.get("gold_idr_per_gram") or 2539000.0
     lines.append(f"\n💰 Total Saldo Tersedia (Setara IDR): {_fmt_rp(total_balance)}")
-    lines.append(f"📈 Kurs Live: 1 USD ≈ {_fmt_rp(rates['usd_to_idr'])} | 1 gr Emas ≈ {_fmt_rp(rates['gold_per_gram_idr'])}")
+    lines.append(f"📈 Kurs Live: 1 USD ≈ {_fmt_rp(usd_rate)} | 1 gr Emas ≈ {_fmt_rp(gold_rate)}")
     return "\n".join(lines)
 
 
@@ -349,10 +352,12 @@ def _process_user_transaction_message(
             }
 
         w_curr = (getattr(source_wallet, "currency", None) or "IDR").upper()
+        target_curr = (getattr(target_wallet, "currency", None) or "IDR").upper()
         amount_in_base = convert_to_idr(amount, w_curr, rates)
+        received_amount = convert_between_currencies(amount, w_curr, target_curr, rates)
 
         source_wallet.balance -= amount
-        target_wallet.balance += amount
+        target_wallet.balance += received_amount
 
         tx = Transaction(
             user_id=user.id,
@@ -523,19 +528,12 @@ def _process_user_transaction_message(
 @router.post("/simulate-chat")
 async def simulate_chat_message(
     req: SimulateChatRequest,
-    current_user: Optional[User] = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Allows simulating chat-based transaction logging directly from UI or tests."""
-    user = current_user
-    if not user:
-        # Fallback to initial admin user if not logged in
-        user = db.query(User).first()
-        if not user:
-            raise HTTPException(status_code=400, detail="No user found to process transaction")
-
     return _process_user_transaction_message(
-        user=user,
+        user=current_user,
         raw_text=req.message,
         source=req.source,
         receipt_meta=req.receipt_data,

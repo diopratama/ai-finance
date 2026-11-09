@@ -12,6 +12,7 @@ from app.services.fire_engine import (
     is_investment_wallet,
 )
 from app.services.planner_skills_loader import get_confirmed_fields_set, save_confirmed_fields_set
+from app.services.market_rates_service import convert_to_idr, fetch_live_market_rates
 from app.auth import get_current_user
 
 router = APIRouter(prefix="/fire", tags=["FIRE & Financial Freedom"])
@@ -43,7 +44,8 @@ def get_fire_profile(current_user: User = Depends(get_current_user), db: Session
         db.refresh(profile)
 
     wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
-    net_worth = sum(w.balance for w in wallets)
+    rates = fetch_live_market_rates()
+    net_worth = sum(convert_to_idr(w.balance, getattr(w, "currency", "IDR") or "IDR", rates) for w in wallets)
 
     metrics = calculate_fire_metrics(
         current_age=profile.current_age,
@@ -70,7 +72,7 @@ def get_fire_profile(current_user: User = Depends(get_current_user), db: Session
     )
 
     liquid_cash = sum(
-        max(0.0, w.balance)
+        max(0.0, convert_to_idr(w.balance, getattr(w, "currency", "IDR") or "IDR", rates))
         for w in wallets
         if not is_investment_wallet(w.name, w.type, getattr(w, "asset_class", None))
         and not any(k in (w.type or "").upper() for k in ("CREDIT", "KREDIT", "PAYLATER", "LOAN", "UTANG", "HUTANG", "CC"))

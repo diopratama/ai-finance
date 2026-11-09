@@ -8,6 +8,7 @@ from sqlalchemy import func, or_
 
 from app.db import User, Wallet, Transaction, BotLink, get_db
 from app.auth import get_admin_user
+from app.services.market_rates_service import convert_to_idr, fetch_live_market_rates
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +67,12 @@ def get_admin_stats(
     )
 
     total_transactions = db.query(Transaction).count()
-    total_system_wallets = db.query(Wallet).filter(Wallet.is_archived == False).count()
-    total_system_balance = (
-        db.query(func.coalesce(func.sum(Wallet.balance), 0.0))
-        .filter(Wallet.is_archived == False)
-        .scalar()
-        or 0.0
+    all_active_wallets = db.query(Wallet).filter(Wallet.is_archived == False).all()
+    rates = fetch_live_market_rates()
+    total_system_wallets = len(all_active_wallets)
+    total_system_balance = sum(
+        convert_to_idr(w.balance, getattr(w, "currency", "IDR") or "IDR", rates)
+        for w in all_active_wallets
     )
 
     bot_connected_users = (
@@ -125,10 +126,14 @@ def get_admin_users(
         .all()
     )
 
+    rates = fetch_live_market_rates()
     user_items = []
     for u in users:
         active_wallets = [w for w in u.wallets if not w.is_archived]
-        total_balance = sum(w.balance for w in active_wallets)
+        total_balance = sum(
+            convert_to_idr(w.balance, getattr(w, "currency", "IDR") or "IDR", rates)
+            for w in active_wallets
+        )
         tx_count = len(u.transactions)
         has_bot = any(b.is_active for b in u.bot_links)
 

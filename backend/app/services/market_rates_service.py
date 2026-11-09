@@ -274,6 +274,43 @@ def convert_to_idr(
     return round(float(amount), 2)
 
 
+def convert_between_currencies(
+    amount: float,
+    from_currency: Optional[str],
+    to_currency: Optional[str],
+    rates: Optional[Dict[str, Any]] = None,
+) -> float:
+    """
+    Converts an amount from one currency/unit to another via IDR as the common pivot.
+    Supports IDR, USD, and GRAM.
+    """
+    if not amount:
+        return 0.0
+    from_u = normalize_currency_unit(from_currency)
+    to_u = normalize_currency_unit(to_currency)
+    if from_u == to_u:
+        return round(float(amount), 4)
+
+    # 1. Convert source to IDR
+    idr_val = convert_to_idr(amount, from_u, rates)
+
+    # 2. Convert IDR to target unit
+    if to_u == "IDR":
+        return round(idr_val, 2)
+    elif to_u == "USD":
+        usd_rate = (rates.get("usd_to_idr") or rates.get("usd_idr")) if rates else get_usd_to_idr_rate()
+        if not usd_rate:
+            usd_rate = DEFAULT_USD_IDR
+        return round(idr_val / usd_rate, 4)
+    elif to_u == "GRAM":
+        gold_price = (rates.get("gold_per_gram_idr") or rates.get("gold_idr_per_gram")) if rates else get_gold_price_per_gram_idr()
+        if not gold_price:
+            gold_price = DEFAULT_GOLD_IDR_PER_GRAM
+        return round(idr_val / gold_price, 4)
+
+    return round(idr_val, 2)
+
+
 def format_currency_with_base(
     amount: float,
     currency_or_unit: Optional[str] = "IDR",

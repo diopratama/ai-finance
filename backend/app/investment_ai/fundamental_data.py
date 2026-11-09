@@ -642,13 +642,14 @@ def get_fundamental_context(market: str, symbol: str) -> Dict[str, Any]:
         return {"text": _format_etf_block(f), "available": bool(f.get("available")), "sharia": None, "sharia_reference": None}
 
     f = fetch_stock_fundamentals(resolve_yahoo_symbol(market, symbol))
-    sharia_reference = get_sharia_reference_status(symbol) if market == "ihsg_syariah" else None
+    is_ihsg = norm == "ihsg"
+    sharia_reference = get_sharia_reference_status(symbol) if is_ihsg else None
     if not f.get("available"):
         text = (
             f"FUNDAMENTAL DATA for {symbol}: UNAVAILABLE (Yahoo Finance returned no statements). "
             "Do not quote valuation multiples, ratios, or financial results from memory."
         )
-        if market == "ihsg_syariah":
+        if is_ihsg:
             text += (
                 "\nSHARIA SCREEN: UNVERIFIED. No financial statements were retrieved, so debt/assets "
                 "and non-halal income ratios cannot be computed. Do NOT state that the stock is "
@@ -657,7 +658,7 @@ def get_fundamental_context(market: str, symbol: str) -> Dict[str, Any]:
             text += "\n" + _format_sharia_reference_block(symbol, sharia_reference)
         return {"text": text, "available": False, "sharia": None, "sharia_reference": sharia_reference}
 
-    sharia = evaluate_sharia_screen(f) if market == "ihsg_syariah" else None
+    sharia = evaluate_sharia_screen(f) if is_ihsg else None
     text = _format_stock_block(f, sharia)
     if sharia_reference:
         text += "\n" + _format_sharia_reference_block(symbol, sharia_reference)

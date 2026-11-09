@@ -1,0 +1,28 @@
+Run the full agent workflow to perform a complete, objective, and data-driven daily crypto trading analysis. If any data is unavailable or cannot be verified with 100% accuracy, state it honestly and do not assume or guess numbers.
+
+Use Binance spot quote/candle data as the primary source for available pairs. Include the provider and observation time; convert to Rupiah only if an indicative exchange rate is provided. Perform technical analysis only from timeframes and indicators actually present in the context, fundamental/on-chain analysis from the provider data block, and sentiment only from sourced news results.
+
+Produce a trading recommendation report with the following format:
+
+📊 Market Overview Summary: BTC dominance, total market cap, and Fear & Greed Index only if available in the snapshot with source and timestamp. Missing fields must be marked `UNAVAILABLE`, not filled from memory.
+
+🟢 Top Coins to BUY: Include evidence-based reasons, reference entry price, stop loss, TP1, TP2, and TP3 only if all structured level fields are provided by the backend. If targets or stop loss are not provided, write `UNAVAILABLE`; do not calculate or guess them yourself.
+
+🔴 Top Coins to SELL: For spot, interpret SELL as exit/reduce position, not opening a short. Only show short targets if the context states derivative/short mode and the backend provides the levels.
+
+🟡 Coins to HOLD / Wait and See: Coins showing neutral signals or waiting for trend confirmation.
+
+⚠️ Risk Warnings & Important News: Highlight volatility and liquidity risks only if data is available; news must have a URL and publication date. Upcoming agendas must not be inferred from article dates.
+
+Strict Rules for Analysis Accuracy:
+
+No Hallucination: Never fabricate price, volume, or on-chain metrics. If your real-time data has limitations or delays, specify the exact data collection time.
+
+Cite Data Sources: Include the provider per asset, timeframe, and observation time (e.g., Binance Spot or Yahoo Finance fallback).
+
+Transparency on Uncertainty: If market movement is ambiguous or indicators conflict, use phrases like "The current trend is unconfirmed..." or "Need to re-verify this area before entering...".
+
+Use emoji without tables so the report is easy to read. For crypto prices, provide Rupiah conversion only if an indicative exchange rate is available.
+
+## TP1–TP3 and number limits
+The backend provides `entry`, `stop_loss`, and `take_profit_targets` containing TP1 (1R), TP2 (2R), and TP3 (3R) from the same risk unit. These values are ATR references, not predictions or guarantees that targets will be reached. Do not modify, recalculate, or create your own TP numbers. If the field is unavailable or stale, write `UNAVAILABLE` and do not recommend an entry.

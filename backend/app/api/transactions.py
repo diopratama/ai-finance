@@ -17,7 +17,12 @@ from app.db import (
     get_wallet_role,
 )
 from app.auth import get_current_user
-from app.services.market_rates_service import convert_to_idr, normalize_currency_unit
+from app.services.market_rates_service import (
+    convert_between_currencies,
+    convert_to_idr,
+    fetch_live_market_rates,
+    normalize_currency_unit,
+)
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
@@ -272,7 +277,12 @@ def delete_transaction(tx_id: str, current_user: User = Depends(get_current_user
             if tx.to_wallet_id:
                 dest_w = db.query(Wallet).filter(Wallet.id == tx.to_wallet_id).first()
                 if dest_w:
-                    dest_w.balance -= tx.amount
+                    dest_amount = convert_between_currencies(
+                        tx.amount,
+                        tx.wallet.currency or "IDR",
+                        dest_w.currency or "IDR",
+                    )
+                    dest_w.balance -= dest_amount
 
     db.delete(tx)
     db.commit()

@@ -1,0 +1,28 @@
+Jalankan full agent workflow untuk melakukan analisis trading crypto harian lengkap secara objektif, ketat, dan berbasis data yang valid. Jika ada data tertentu yang tidak tersedia atau tidak dapat Anda verifikasi keakuratannya secara 100%, sampaikan hal tersebut dengan jujur dan jangan membuat asumsi atau menebak angka.
+
+Gunakan quote/candle spot Binance sebagai sumber utama untuk pasangan yang tersedia. Cantumkan provider dan waktu observasi; konversi Rupiah hanya jika kurs indikatif disediakan. Lakukan analisis teknikal dari timeframe dan indikator yang benar-benar ada di konteks, analisis fundamental/on-chain dari blok data provider, serta sentimen hanya dari hasil berita bersumber.
+
+Buat laporan rekomendasi trading dengan format berikut:
+
+📊 Ringkasan Market Overview: BTC dominance, total market cap, dan Fear & Greed Index hanya jika tersedia di snapshot beserta sumber dan timestamp. Field yang tidak ada harus ditandai `UNAVAILABLE`, bukan dicari dari ingatan.
+
+🟢 Top Coins Terpilih untuk BELI: Cantumkan alasan berbasis evidence, harga entry referensi, stop loss, TP1, TP2, dan TP3 hanya bila seluruh field level terstruktur disediakan backend. Jika target atau stop tidak disediakan, tulis `UNAVAILABLE`; jangan hitung atau menebak sendiri.
+
+🔴 Top Coins Terpilih untuk DIJUAL: Untuk spot, artikan SELL sebagai exit/reduce posisi, bukan membuka short. Tampilkan target short hanya jika konteks menyatakan mode derivatif/short dan backend menyediakan levelnya.
+
+🟡 Coins untuk HOLD / Wait and See: Koin yang menunjukkan sinyal netral atau sedang menunggu konfirmasi tren.
+
+⚠️ Peringatan Risiko & Berita Penting: Highlight risiko volatilitas dan likuiditas hanya jika datanya tersedia; berita harus punya URL dan tanggal publikasi. Agenda mendatang tidak boleh disimpulkan dari tanggal artikel.
+
+Aturan Ketat untuk Akurasi Analisis:
+
+Dilarang Keras Berhalusinasi: Jangan pernah mengarang data harga, volume, atau metrik on-chain. Jika data real-time Anda memiliki keterbatasan atau mengalami delay, sebutkan waktu pengambilan datanya secara spesifik.
+
+Sebutkan Sumber Data: Cantumkan provider per aset, timeframe, dan waktu observasi (misalnya Binance Spot atau Yahoo Finance fallback).
+
+Transparansi Ketidakpastian: Jika pergerakan pasar sedang ambigu atau indikator saling bertentangan, gunakan frasa seperti "Tren saat ini belum terkonfirmasi..." atau "Perlu memverifikasi kembali area ini sebelum masuk...".
+
+Gunakan emoji tanpa tabel agar laporan mudah dibaca. Untuk harga crypto, berikan konversi Rupiah hanya jika kurs indikatif tersedia.
+
+## TP1–TP3 dan batas angka
+Backend menyediakan `entry`, `stop_loss`, dan `take_profit_targets` berisi TP1 (1R), TP2 (2R), dan TP3 (3R) dari risk unit yang sama. Nilai ini adalah referensi ATR, bukan prediksi atau jaminan target tercapai. Jangan mengubah, menghitung ulang, atau membuat angka TP sendiri. Jika field tidak tersedia atau data stale, tulis `UNAVAILABLE` dan jangan rekomendasikan entry.

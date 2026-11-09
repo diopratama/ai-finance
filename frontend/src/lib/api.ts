@@ -291,22 +291,8 @@ export async function getWallets(month?: string): Promise<{
   portfolio_review?: PortfolioReview;
   market_rates?: import("./types").MarketRates;
 }> {
-  try {
-    const q = month ? `?month=${encodeURIComponent(month)}` : "";
-    return await apiFetch(`/wallets${q}`);
-  } catch {
-    return {
-      total_balance: 16250000,
-      personal_balance: 16250000,
-      shared_balance: 0,
-      currency: "IDR",
-      wallets: [
-        { id: "1", name: "Bank BCA", type: "BANK", balance: 15000000, currency: "IDR", color: "#f0b000", is_default: false, created_at: new Date().toISOString() },
-        { id: "2", name: "GoPay", type: "EWALLET", balance: 750000, currency: "IDR", color: "#06b6d4", is_default: false, created_at: new Date().toISOString() },
-        { id: "3", name: "Cash Dompet", type: "CASH", balance: 500000, currency: "IDR", color: "#10b981", is_default: true, created_at: new Date().toISOString() },
-      ],
-    };
-  }
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  return apiFetch(`/wallets${q}`);
 }
 
 export async function createWallet(data: {
@@ -632,53 +618,7 @@ export async function getPlannerOverview(): Promise<{
   portfolio_review?: PortfolioReview;
   personal_profile?: PersonalProfile;
 }> {
-  try {
-    return await apiFetch("/planner/health-score");
-  } catch {
-    return {
-      context: {
-        base_currency: "IDR",
-        net_worth_formatted: "Rp 16.250.000",
-        total_wallet_balance_formatted: "Rp 16.250.000",
-        liquid_balance_formatted: "Rp 16.250.000",
-        monthly_income_formatted: "Rp 15.000.000",
-        monthly_expenses_formatted: "Rp 8.000.000",
-        monthly_debt_formatted: "Rp 0",
-        dsr_percentage: 0,
-        savings_margin_percentage: 46.7,
-        household_summary: "Lajang, 0 tanggungan",
-        emergency_fund_months: 2.0,
-        emergency_target_months: 3,
-        emergency_fund_status: "Perlu Ditingkatkan",
-        current_age: 28,
-        target_fire_age: 45,
-        fire_target_formatted: "Rp 2.400.000.000",
-        coast_fire_formatted: "Rp 760.000.000",
-        is_coast_fire_achieved: false,
-        risk_profile: "MODERATE",
-        sharia_preference: false,
-        health_score: 65,
-        health_status: "HEALTHY",
-        profile_completeness_pct: 20,
-        missing_profile_hints: [
-          "Penghasilan bersih bulanan",
-          "Status pernikahan & jumlah tanggungan",
-        ],
-      },
-      allocations: {
-        profile: "Moderat (Balanced Growth)",
-        description: "Keseimbangan ideal antara apresiasi modal jangka panjang dan stabilitas arus kas.",
-        expected_cagr: "8.5% - 10.5%",
-        allocations: [
-          { asset: "Saham & Reksa Dana Saham", percentage: 40, color: "#f0b000" },
-          { asset: "Obligasi Negara / SBN", percentage: 30, color: "#3b82f6" },
-          { asset: "Reksa Dana Pendapatan Tetap & Pasar Uang", percentage: 15, color: "#10b981" },
-          { asset: "Emas Fisik / Antam", percentage: 10, color: "#eab308" },
-          { asset: "Aset Alternatif / Crypto", percentage: 5, color: "#f97316" },
-        ],
-      },
-    };
-  }
+  return apiFetch("/planner/health-score");
 }
 
 export async function updatePersonalProfile(data: Partial<{
@@ -777,36 +717,7 @@ export async function getFIREProfile(): Promise<{
   allocations: AssetAllocation;
   portfolio_review?: PortfolioReview;
 }> {
-  try {
-    return await apiFetch("/fire/profile");
-  } catch {
-    return {
-      profile: { current_age: 28, target_fire_age: 45, monthly_living_expense: 8000000, risk_tolerance: "MODERATE" },
-      metrics: {
-        fire_number: 2400000000,
-        annual_expenses: 96000000,
-        withdrawal_rate: 0.04,
-        current_net_worth: 16250000,
-        progress_percentage: 0.7,
-        years_to_target_age: 17,
-        projected_net_worth_at_fire_age: 450000000,
-        is_on_track: false,
-        actual_years_needed: 24.5,
-      },
-      allocations: {
-        profile: "Moderat",
-        description: "Alokasi berimbang untuk akselerasi pertumbuhan modal menuju FIRE.",
-        expected_cagr: "9.0%",
-        allocations: [
-          { asset: "Saham IDX & US ETF", percentage: 40, color: "#f0b000" },
-          { asset: "Obligasi Negara / SBN", percentage: 30, color: "#3b82f6" },
-          { asset: "Pasar Uang & Likuid", percentage: 15, color: "#10b981" },
-          { asset: "Emas", percentage: 10, color: "#eab308" },
-          { asset: "Crypto / Alternatif", percentage: 5, color: "#f97316" },
-        ],
-      },
-    };
-  }
+  return apiFetch("/fire/profile");
 }
 
 export async function calculateCustomFIRE(params: {
@@ -860,11 +771,17 @@ export async function stopInvestmentTask(task_id: string): Promise<{ success: bo
 }
 
 export async function chatWithInvestmentAgent(payload: {
-  symbol: string;
+  symbol?: string;
   market: string;
   history: Array<{ role: string; content: string }>;
   analysis_context: any;
-}): Promise<{ response: string }> {
+  user_message?: string;
+  mode?: "standard" | "deep_validation";
+}): Promise<{
+  reply: string;
+  mode: "standard" | "deep_validation";
+  validation_meta?: any;
+}> {
   return apiFetch("/investment/chat", {
     method: "POST",
     body: JSON.stringify(payload),

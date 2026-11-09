@@ -53,20 +53,7 @@ class RouterService:
         """
 
         if not self.is_available():
-            logger.info("9router API URL not configured. Returning fallback OCR data.")
-            return {
-                "merchant": "Superindo / Indomaret",
-                "total_amount": 87500.0,
-                "currency": "IDR",
-                "items": [
-                    {"name": "Minyak Goreng 1L", "price": 24000.0},
-                    {"name": "Susu UHT 1L", "price": 19500.0},
-                    {"name": "Roti Gandum", "price": 18000.0},
-                    {"name": "Kopi Botol", "price": 26000.0},
-                ],
-                "category_suggestion": "Belanja",
-                "confidence": 0.92,
-            }
+            raise RuntimeError("Layanan AI Vision 9router belum terkonfigurasi. Silakan input transaksi manual.")
 
         try:
             b64_image = base64.b64encode(image_bytes).decode("utf-8")
@@ -94,7 +81,7 @@ class RouterService:
                 res = await client.post(url, json=payload, headers=self._headers())
                 if res.status_code != 200:
                     logger.error("9router vision error: %s - %s", res.status_code, res.text)
-                    raise Exception(f"9router status code {res.status_code}: {res.text}")
+                    raise RuntimeError(f"Gagal memproses struk via AI Vision (status {res.status_code}).")
 
                 res_json = res.json()
                 raw_text = res_json["choices"][0]["message"]["content"].strip()
@@ -105,20 +92,12 @@ class RouterService:
 
         except Exception as e:
             logger.error("Failed to parse receipt with 9router: %s", e)
-            return {
-                "merchant": "Struk Belanja",
-                "total_amount": 50000.0,
-                "currency": "IDR",
-                "items": [],
-                "category_suggestion": "Belanja",
-                "confidence": 0.6,
-                "error": str(e),
-            }
+            raise RuntimeError(f"Gagal membaca struk belanja: {e}")
 
     async def transcribe_audio_note(self, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
-        """Transcribes audio notes into text via 9router audio endpoint or fallback."""
+        """Transcribes audio notes into text via 9router audio endpoint."""
         if not self.is_available():
-            return "beli makan siang nasi padang 35 ribu pakai gopay"
+            raise RuntimeError("Layanan transkripsi suara belum terkonfigurasi. Silakan ketik transaksi dalam teks.")
 
         try:
             url = f"{self.base_url}/audio/transcriptions"
@@ -131,11 +110,14 @@ class RouterService:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 res = await client.post(url, files=files, data=data, headers=headers)
                 if res.status_code == 200:
-                    return res.json().get("text", "").strip()
+                    text = res.json().get("text", "").strip()
+                    if text:
+                        return text
         except Exception as e:
-            logger.warning("9router audio transcription fallback: %s", e)
+            logger.warning("9router audio transcription error: %s", e)
+            raise RuntimeError(f"Gagal mentranskripsi pesan suara: {e}")
 
-        return "beli makan siang nasi padang 35 ribu pakai gopay"
+        raise RuntimeError("Transkripsi suara tidak menghasilkan teks. Silakan coba lagi atau ketik secara manual.")
 
     async def generate_planner_response_stream(
         self,
@@ -216,7 +198,7 @@ class RouterService:
 
         except Exception as e:
             logger.error("9router stream exception: %s", e)
-            net_worth = financial_context.get("net_worth_formatted", "Rp 16.250.000")
+            net_worth = financial_context.get("net_worth_formatted", "Rp 0")
             ef_months = financial_context.get("emergency_fund_months", 0)
             ef_target = financial_context.get("emergency_target_months", 3)
             fallback_parts = [
