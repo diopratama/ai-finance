@@ -383,6 +383,9 @@ def resolve_yahoo_symbol(market: str, symbol: str) -> str:
     if norm == "crypto":
         base = s.split("/")[0].split("-")[0]
         return f"{base}-USD"
+    if norm == "ihsg" or "ihsg" in (market or "").lower() or "syariah" in (market or "").lower():
+        if not s.endswith(".JK"):
+            return f"{s}.JK"
     return s
 
 
