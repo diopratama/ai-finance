@@ -640,3 +640,4 @@ Seluruh rute API diawali dengan prefiks `/api/v1`:
 ---
 
 *Dokumentasi ini disusun dan diperbarui secara otomatis seiring dengan evolusi basis kode AI-Finance.*
+
