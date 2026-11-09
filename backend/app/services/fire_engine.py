@@ -67,10 +67,43 @@ def calculate_fire_metrics(
     }
 
 
-def get_asset_allocation_recommendation(risk_tolerance: str, sharia_preference: bool = False) -> Dict[str, Any]:
-    """Provides holistic asset allocation models based on risk tolerance and Conventional/Sharia preference."""
-    risk = (risk_tolerance or "MODERATE").upper()
+PORTFOLIO_STRATEGY_PRESETS: Dict[str, Dict[str, Any]] = {
+    "AUTO_RISK": {
+        "label": "Otomatis Sesuai Profil Risiko",
+        "description": "Mengikuti profil risiko (Konservatif/Moderat/Agresif) dan Preferensi Syariah Anda.",
+    },
+    "INDEX_ETF_CORE": {
+        "label": "Passive Index & ETF Core",
+        "description": "Inti portofolio pada reksa dana indeks & ETF berbiaya rendah (IDX30/LQ45/S&P 500), dilengkapi SBN, emas, dan kas taktis.",
+        "expected_cagr": "8.5% - 11.0%",
+        "allocations": {"INDEX_ETF": 45, "BOND": 20, "EQUITY": 15, "GOLD": 10, "MONEY_MARKET": 10},
+    },
+    "REAL_ASSET_PROPERTY": {
+        "label": "Aset Riil: Properti & Tanah",
+        "description": "Kekayaan berbasis aset riil produktif (properti sewa/kos, tanah kavling) diseimbangkan dengan aset likuid.",
+        "expected_cagr": "7.5% - 10.5%",
+        "allocations": {"REAL_ESTATE": 30, "LAND": 20, "INDEX_ETF": 12, "EQUITY": 8, "BOND": 15, "GOLD": 10, "MONEY_MARKET": 5},
+    },
+    "HIGH_GROWTH_CRYPTO": {
+        "label": "High-Growth: Saham Tech, ETF & Crypto",
+        "description": "Akselerasi pertumbuhan jangka panjang lewat saham growth, ETF teknologi, dan crypto bluechip (volatilitas tinggi).",
+        "expected_cagr": "12.0% - 18.0%",
+        "allocations": {"EQUITY": 35, "INDEX_ETF": 25, "CRYPTO": 20, "GOLD": 10, "BOND": 5, "MONEY_MARKET": 5},
+    },
+    "SHARIA_REAL_ASSET": {
+        "label": "Syariah Holistik & Aset Riil",
+        "description": "Saham/indeks syariah ISSI, Sukuk Negara, properti & tanah produktif, emas, serta pasar uang syariah (bebas riba).",
+        "expected_cagr": "7.5% - 10.0%",
+        "allocations": {"EQUITY": 15, "INDEX_ETF": 10, "BOND": 25, "REAL_ESTATE": 12, "LAND": 8, "GOLD": 20, "MONEY_MARKET": 10},
+    },
+    "CUSTOM": {
+        "label": "Custom Target Alokasi (Atur Sendiri)",
+        "description": "Bobot target setiap kelas aset diatur sendiri oleh Anda.",
+    },
+}
 
+
+def _risk_based_allocation(risk: str, sharia_preference: bool) -> Dict[str, Any]:
     if sharia_preference:
         if risk == "CONSERVATIVE":
             return {
@@ -78,18 +111,20 @@ def get_asset_allocation_recommendation(risk_tolerance: str, sharia_preference: 
                 "description": "Fokus menjaga nilai pokok bebas riba dengan instrumen negara & pasar uang syariah.",
                 "allocations": [
                     {"asset": "Sukuk Negara Ritel (SR / ST / PBS)", "asset_class": "BOND", "percentage": 45, "color": "#3b82f6"},
-                    {"asset": "Reksa Dana Pasar Uang Syariah & Deposito Mudharabah", "asset_class": "MONEY_MARKET", "percentage": 35, "color": "#10b981"},
+                    {"asset": "Reksa Dana Pasar Uang Syariah & Deposito Mudharabah", "asset_class": "MONEY_MARKET", "percentage": 30, "color": "#10b981"},
                     {"asset": "Emas Fisik / Logam Mulia", "asset_class": "GOLD", "percentage": 15, "color": "#eab308"},
+                    {"asset": "Reksa Dana Indeks Syariah (JII / ISSI)", "asset_class": "INDEX_ETF", "percentage": 5, "color": "#6366f1"},
                     {"asset": "Saham Syariah Bluechip (JII / ISSI)", "asset_class": "EQUITY", "percentage": 5, "color": "#8b5cf6"},
                 ],
                 "expected_cagr": "5.8% - 7.2%",
             }
-        elif risk == "AGGRESSIVE":
+        if risk == "AGGRESSIVE":
             return {
-                "profile": "Agresif Syariah (Pertumbuhan Ekuitas Halal)",
+                "profile": "Agresif Syariah (Pertumbuhan Ekuital Halal)",
                 "description": "Akselerasi kekayaan jangka panjang berbasis efek syariah terverifikasi DES/ISSI & emas.",
                 "allocations": [
-                    {"asset": "Saham Syariah Pilihan (ISSI / JII70)", "asset_class": "EQUITY", "percentage": 55, "color": "#8b5cf6"},
+                    {"asset": "Saham Syariah Pilihan (ISSI / JII70)", "asset_class": "EQUITY", "percentage": 35, "color": "#8b5cf6"},
+                    {"asset": "Reksa Dana Indeks / ETF Syariah", "asset_class": "INDEX_ETF", "percentage": 20, "color": "#6366f1"},
                     {"asset": "Sukuk Negara / Project Based Sukuk (PBS)", "asset_class": "BOND", "percentage": 20, "color": "#3b82f6"},
                     {"asset": "Emas Fisik / Logam Mulia", "asset_class": "GOLD", "percentage": 15, "color": "#eab308"},
                     {"asset": "Reksa Dana Pasar Uang Syariah (Kas Taktis)", "asset_class": "MONEY_MARKET", "percentage": 10, "color": "#10b981"},
@@ -100,7 +135,8 @@ def get_asset_allocation_recommendation(risk_tolerance: str, sharia_preference: 
             "profile": "Moderat Syariah (Pertumbuhan Berimbang Halal)",
             "description": "Kombinasi seimbang antara bagi hasil Sukuk Negara, ekuitas syariah, dan lindung nilai emas.",
             "allocations": [
-                {"asset": "Saham & Reksa Dana Saham Syariah (JII / ISSI)", "asset_class": "EQUITY", "percentage": 40, "color": "#8b5cf6"},
+                {"asset": "Saham Syariah (JII / ISSI)", "asset_class": "EQUITY", "percentage": 25, "color": "#8b5cf6"},
+                {"asset": "Reksa Dana Indeks / ETF Syariah", "asset_class": "INDEX_ETF", "percentage": 15, "color": "#6366f1"},
                 {"asset": "Sukuk Negara (SR / ST / PBS)", "asset_class": "BOND", "percentage": 35, "color": "#3b82f6"},
                 {"asset": "Reksa Dana Pasar Uang Syariah", "asset_class": "MONEY_MARKET", "percentage": 15, "color": "#10b981"},
                 {"asset": "Emas Fisik / Antam", "asset_class": "GOLD", "percentage": 10, "color": "#eab308"},
@@ -116,16 +152,17 @@ def get_asset_allocation_recommendation(risk_tolerance: str, sharia_preference: 
                 {"asset": "Obligasi Negara / SBN / Sukuk", "asset_class": "BOND", "percentage": 45, "color": "#3b82f6"},
                 {"asset": "Reksa Dana Pasar Uang & Deposito", "asset_class": "MONEY_MARKET", "percentage": 30, "color": "#10b981"},
                 {"asset": "Emas Logam Mulia", "asset_class": "GOLD", "percentage": 15, "color": "#eab308"},
-                {"asset": "Saham Bluechip / Index Fund", "asset_class": "EQUITY", "percentage": 10, "color": "#8b5cf6"},
+                {"asset": "Reksa Dana Indeks / ETF (IDX30 / S&P 500)", "asset_class": "INDEX_ETF", "percentage": 10, "color": "#6366f1"},
             ],
             "expected_cagr": "6.0% - 7.5%",
         }
-    elif risk == "AGGRESSIVE":
+    if risk == "AGGRESSIVE":
         return {
             "profile": "Agresif (Maximum Capital Growth)",
             "description": "Fokus pada pertumbuhan kekayaan jangka panjang dan siap menghadapi fluktuasi pasar.",
             "allocations": [
-                {"asset": "Saham (IDX LQ45 & US Tech / S&P 500)", "asset_class": "EQUITY", "percentage": 55, "color": "#8b5cf6"},
+                {"asset": "Saham (IDX LQ45 & US Tech)", "asset_class": "EQUITY", "percentage": 30, "color": "#8b5cf6"},
+                {"asset": "Indeks & ETF (S&P 500 / NASDAQ-100 / IDX30)", "asset_class": "INDEX_ETF", "percentage": 25, "color": "#6366f1"},
                 {"asset": "Crypto (Bitcoin / Bluechip Crypto)", "asset_class": "CRYPTO", "percentage": 15, "color": "#f97316"},
                 {"asset": "Obligasi Korporasi / SBN", "asset_class": "BOND", "percentage": 15, "color": "#3b82f6"},
                 {"asset": "Emas Logam Mulia", "asset_class": "GOLD", "percentage": 10, "color": "#eab308"},
@@ -133,19 +170,105 @@ def get_asset_allocation_recommendation(risk_tolerance: str, sharia_preference: 
             ],
             "expected_cagr": "11.0% - 15.0%",
         }
-    else:  # MODERATE
-        return {
-            "profile": "Moderat (Balanced Growth)",
-            "description": "Keseimbangan ideal antara apresiasi modal jangka panjang dan stabilitas arus kas.",
-            "allocations": [
-                {"asset": "Saham & Reksa Dana Saham", "asset_class": "EQUITY", "percentage": 40, "color": "#8b5cf6"},
-                {"asset": "Obligasi Negara / SBN", "asset_class": "BOND", "percentage": 30, "color": "#3b82f6"},
-                {"asset": "Reksa Dana Pendapatan Tetap & Pasar Uang", "asset_class": "MONEY_MARKET", "percentage": 15, "color": "#10b981"},
-                {"asset": "Emas Fisik / Antam", "asset_class": "GOLD", "percentage": 10, "color": "#eab308"},
-                {"asset": "Aset Alternatif / Crypto Pilihan", "asset_class": "CRYPTO", "percentage": 5, "color": "#f97316"},
-            ],
-            "expected_cagr": "8.5% - 10.5%",
-        }
+    return {
+        "profile": "Moderat (Balanced Growth)",
+        "description": "Keseimbangan ideal antara apresiasi modal jangka panjang dan stabilitas arus kas.",
+        "allocations": [
+            {"asset": "Saham & Reksa Dana Saham", "asset_class": "EQUITY", "percentage": 20, "color": "#8b5cf6"},
+            {"asset": "Reksa Dana Indeks & ETF (IDX30 / S&P 500)", "asset_class": "INDEX_ETF", "percentage": 20, "color": "#6366f1"},
+            {"asset": "Obligasi Negara / SBN", "asset_class": "BOND", "percentage": 30, "color": "#3b82f6"},
+            {"asset": "Reksa Dana Pendapatan Tetap & Pasar Uang", "asset_class": "MONEY_MARKET", "percentage": 15, "color": "#10b981"},
+            {"asset": "Emas Fisik / Antam", "asset_class": "GOLD", "percentage": 10, "color": "#eab308"},
+            {"asset": "Aset Alternatif / Crypto Pilihan", "asset_class": "CRYPTO", "percentage": 5, "color": "#f97316"},
+        ],
+        "expected_cagr": "8.5% - 10.5%",
+    }
+
+
+def normalize_custom_allocations(raw: Optional[Dict[str, Any]]) -> Dict[str, float]:
+    """Sanitizes a custom allocation map into known asset classes with non-negative weights."""
+    clean: Dict[str, float] = {}
+    if not isinstance(raw, dict):
+        return clean
+    for key, val in raw.items():
+        ac = str(key or "").strip().upper()
+        if ac not in ASSET_CLASS_LABELS:
+            continue
+        try:
+            pct = float(val)
+        except (TypeError, ValueError):
+            continue
+        if pct > 0:
+            clean[ac] = round(min(100.0, pct), 2)
+    return clean
+
+
+def _allocations_from_map(weights: Dict[str, float]) -> List[Dict[str, Any]]:
+    total = sum(weights.values())
+    if total <= 0:
+        return []
+    items: List[Dict[str, Any]] = []
+    for ac, pct in sorted(weights.items(), key=lambda kv: kv[1], reverse=True):
+        normalized_pct = round(pct * 100.0 / total, 1) if abs(total - 100.0) > 0.01 else pct
+        items.append({
+            "asset": ASSET_CLASS_LABELS.get(ac, ac),
+            "asset_class": ac,
+            "percentage": int(normalized_pct) if float(normalized_pct).is_integer() else normalized_pct,
+            "color": ASSET_CLASS_COLORS.get(ac, "#64748b"),
+        })
+    return items
+
+
+def get_asset_allocation_recommendation(
+    risk_tolerance: str,
+    sharia_preference: bool = False,
+    strategy: Optional[str] = None,
+    custom_allocations: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Provides holistic asset allocation models based on risk tolerance, strategy preset, or custom weights.
+    """
+    risk = (risk_tolerance or "MODERATE").upper()
+    strat = (strategy or "AUTO_RISK").strip().upper()
+    if strat not in PORTFOLIO_STRATEGY_PRESETS:
+        strat = "AUTO_RISK"
+
+    if strat == "CUSTOM":
+        weights = normalize_custom_allocations(custom_allocations)
+        allocations = _allocations_from_map(weights)
+        if allocations:
+            return {
+                "strategy": "CUSTOM",
+                "strategy_label": PORTFOLIO_STRATEGY_PRESETS["CUSTOM"]["label"],
+                "profile": "Custom Target Alokasi (Atur Sendiri)",
+                "description": "Target alokasi kelas aset yang Anda tentukan sendiri.",
+                "allocations": allocations,
+                "expected_cagr": "Bergantung komposisi",
+            }
+        strat = "AUTO_RISK"
+
+    if strat == "AUTO_RISK":
+        model = _risk_based_allocation(risk, sharia_preference)
+        model["strategy"] = "AUTO_RISK"
+        model["strategy_label"] = PORTFOLIO_STRATEGY_PRESETS["AUTO_RISK"]["label"]
+        return model
+
+    preset = PORTFOLIO_STRATEGY_PRESETS[strat]
+    weights = dict(preset["allocations"])
+    if sharia_preference and weights.get("CRYPTO"):
+        weights["GOLD"] = weights.get("GOLD", 0) + weights.pop("CRYPTO")
+    return {
+        "strategy": strat,
+        "strategy_label": preset["label"],
+        "profile": preset["label"] + (" (Mode Syariah)" if sharia_preference else ""),
+        "description": preset["description"],
+        "allocations": _allocations_from_map(weights),
+        "expected_cagr": preset["expected_cagr"],
+    }
+
+
+def list_portfolio_strategies() -> List[Dict[str, str]]:
+    return [{"key": k, "label": v["label"], "description": v["description"]} for k, v in PORTFOLIO_STRATEGY_PRESETS.items()]
 
 
 def determine_emergency_target_months(is_married: bool = False, dependents_count: int = 0) -> int:
@@ -234,18 +357,24 @@ def calculate_financial_health_score(
 
 ASSET_CLASS_LABELS = {
     "EQUITY": "Saham & Ekuitas",
+    "INDEX_ETF": "Reksa Dana Indeks & ETF",
     "BOND": "Obligasi / SBN / Sukuk",
     "MONEY_MARKET": "Pasar Uang & Deposito",
     "GOLD": "Emas & Logam Mulia",
     "CRYPTO": "Crypto & Aset Alternatif",
+    "REAL_ESTATE": "Properti Produktif / Sewa",
+    "LAND": "Tanah & Kavling",
 }
 
 ASSET_CLASS_COLORS = {
     "EQUITY": "#8b5cf6",
+    "INDEX_ETF": "#6366f1",
     "BOND": "#3b82f6",
     "MONEY_MARKET": "#10b981",
     "GOLD": "#eab308",
     "CRYPTO": "#f97316",
+    "REAL_ESTATE": "#14b8a6",
+    "LAND": "#84cc16",
 }
 
 
@@ -254,16 +383,16 @@ def is_investment_wallet(name: str, wallet_type: str, explicit_class: Optional[s
     if explicit_class and explicit_class.strip().upper() in ASSET_CLASS_LABELS:
         return True
     wt = (wallet_type or "").upper()
-    if any(k in wt for k in ("INVEST", "RDN", "SAHAM", "REKSADANA", "CRYPTO", "EMAS", "SBN", "SUKUK", "OBLIGASI", "DEPOSITO")):
+    if any(k in wt for k in ("INVEST", "RDN", "SAHAM", "REKSADANA", "CRYPTO", "EMAS", "SBN", "SUKUK", "OBLIGASI", "DEPOSITO", "ETF", "INDEX", "PROPERTI", "PROPERTY", "TANAH", "KAVLING")):
         return True
     nm = (name or "").lower()
-    if any(k in nm for k in ("bibit", "bareksa", "stockbit", "ajaib", "pluang", "ipot", "reksadana", "reksa dana", "saham", "sbn", "sukuk", "ori", "sbr", "emas", "antam", "pegadaian", "crypto", "bitcoin", "tokocrypto", "indodax", "binance", "rdn", "deposito", "investasi")):
+    if any(k in nm for k in ("bibit", "bareksa", "stockbit", "ajaib", "pluang", "ipot", "reksadana", "reksa dana", "saham", "sbn", "sukuk", "ori", "sbr", "emas", "antam", "pegadaian", "crypto", "bitcoin", "tokocrypto", "indodax", "binance", "rdn", "deposito", "investasi", "etf", "indeks", "properti", "property", "kos", "kost", "kontrakan", "ruko", "apartemen", "tanah", "kavling")):
         return True
     return False
 
 
 def infer_wallet_asset_class(name: str, wallet_type: str, explicit_class: Optional[str] = None) -> Optional[str]:
-    """Maps an investment wallet into one of: EQUITY, BOND, MONEY_MARKET, GOLD, CRYPTO."""
+    """Maps an investment wallet into one of 8 asset classes."""
     if explicit_class and explicit_class.strip().upper() in ASSET_CLASS_LABELS:
         return explicit_class.strip().upper()
 
@@ -271,10 +400,16 @@ def infer_wallet_asset_class(name: str, wallet_type: str, explicit_class: Option
         return None
 
     combined = f"{name or ''} {wallet_type or ''}".lower()
+    if any(k in combined for k in ("tanah", "kavling")):
+        return "LAND"
+    if any(k in combined for k in ("properti", "property", "kost", "kos", "kontrakan", "ruko", "apartemen")):
+        return "REAL_ESTATE"
     if any(k in combined for k in ("emas", "gold", "antam", "logam mulia", "pegadaian")):
         return "GOLD"
     if any(k in combined for k in ("crypto", "bitcoin", "btc", "eth", "binance", "tokocrypto", "indodax", "pintu", "pluang crypto", "web3")):
         return "CRYPTO"
+    if any(k in combined for k in ("etf", "indeks", "index", "idx30", "s&p", "sp500", "nasdaq", "voo", "qqq", "vti")):
+        return "INDEX_ETF"
     if any(k in combined for k in ("sbn", "sukuk", "obligasi", "bond", "ori", "sbr", "st0", "sr0", "pbs", "fr0", "pendapatan tetap", "rdpt")):
         return "BOND"
     if any(k in combined for k in ("pasar uang", "rdpu", "deposito", "money market")):
@@ -290,12 +425,19 @@ def evaluate_investment_portfolio(
     monthly_expenses: float = 8_000_000.0,
     is_married: bool = False,
     dependents_count: int = 0,
+    strategy: Optional[str] = None,
+    custom_allocations: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Compares the user's investment wallets against the reference asset allocation model
     and evaluates financial best practices (Emergency Fund readiness, Cash Drag, Concentration Risk, Rebalancing).
     """
-    ref_model = get_asset_allocation_recommendation(risk_tolerance=risk_tolerance, sharia_preference=sharia_preference)
+    ref_model = get_asset_allocation_recommendation(
+        risk_tolerance=risk_tolerance,
+        sharia_preference=sharia_preference,
+        strategy=strategy,
+        custom_allocations=custom_allocations,
+    )
     target_map: Dict[str, Dict[str, Any]] = {}
     for item in ref_model["allocations"]:
         ac = item.get("asset_class", "EQUITY")
@@ -306,7 +448,7 @@ def evaluate_investment_portfolio(
             "color": item.get("color", ASSET_CLASS_COLORS.get(ac, "#8b5cf6")),
         }
 
-    # Ensure all 5 standard asset classes exist in comparison map
+    # Ensure all standard asset classes exist in comparison map
     for ac, default_label in ASSET_CLASS_LABELS.items():
         if ac not in target_map:
             target_map[ac] = {
@@ -504,6 +646,20 @@ def evaluate_investment_portfolio(
             ),
         })
 
+    # 4. Check Illiquid Real Asset Concentration (Property + Land)
+    real_asset_total = actual_by_class.get("REAL_ESTATE", 0.0) + actual_by_class.get("LAND", 0.0)
+    real_asset_pct = round((real_asset_total / total_investment) * 100, 1) if total_investment > 0 else 0.0
+    if real_asset_pct > 60.0:
+        best_practices.append({
+            "key": "ILLIQUID_CONCENTRATION",
+            "title": "Konsentrasi Tinggi pada Aset Riil Tidak Likuid",
+            "passed": False,
+            "detail": f"{real_asset_pct}% dari total investasi ditempatkan pada properti dan tanah. Pastikan ada aset likuid yang cukup (emas/sukuk/pasar uang) jika membutuhkan pencairan cepat.",
+        })
+        recommendations.append(
+            "Seimbangkan porsi properti/tanah dengan memperkuat instrumen likuid (Emas, SBN/Sukuk, atau Reksa Dana Indeks)."
+        )
+
     # Generate specific rebalancing step recommendations
     if total_investment > 0:
         for comp in allocations_comparison:
@@ -532,6 +688,9 @@ def evaluate_investment_portfolio(
         "invested_ratio_pct": invested_ratio_pct,
         "risk_profile": (risk_tolerance or "MODERATE").upper(),
         "sharia_preference": bool(sharia_preference),
+        "portfolio_strategy": ref_model.get("strategy", "AUTO_RISK"),
+        "portfolio_strategy_label": ref_model.get("strategy_label", ref_model["profile"]),
+        "available_strategies": list_portfolio_strategies(),
         "reference_profile_name": ref_model["profile"],
         "reference_description": ref_model["description"],
         "expected_cagr": ref_model["expected_cagr"],

@@ -31,8 +31,9 @@ import {
   updateWalletMemberRole,
   removeWalletMember,
   resetAccountData,
+  updatePortfolioStrategy,
 } from "@/lib/api";
-import { Wallet, WalletMember, PortfolioReview, MarketRates } from "@/lib/types";
+import { Wallet, WalletMember, PortfolioReview, MarketRates, PortfolioStrategyPreset } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
 const TYPE_PRESETS = [
@@ -50,11 +51,14 @@ const TYPE_PRESETS = [
 
 const ASSET_CLASS_OPTIONS = [
   { value: "", label: "Otomatis Deteksi dari Nama/Tipe (Atau Bukan Investasi)" },
-  { value: "EQUITY", label: "Saham & Ekuitas (Reksa Dana Saham / RDN / ETF)" },
+  { value: "EQUITY", label: "Saham & Ekuitas (Saham BEI / US / RDN)" },
+  { value: "INDEX_ETF", label: "Reksa Dana Indeks & ETF (IDX30 / LQ45 / S&P 500 / Global)" },
   { value: "BOND", label: "Obligasi / SBN / Sukuk Negara" },
   { value: "MONEY_MARKET", label: "Pasar Uang & Deposito" },
   { value: "GOLD", label: "Emas & Logam Mulia" },
   { value: "CRYPTO", label: "Crypto & Aset Alternatif" },
+  { value: "REAL_ESTATE", label: "Properti Produktif / Sewa / Rumah Kos / Ruko" },
+  { value: "LAND", label: "Tanah Produktif / Kavling" },
 ];
 
 export default function WalletsPage() {
@@ -103,6 +107,46 @@ export default function WalletsPage() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteError, setInviteError] = useState("");
   const [inviteSuccess, setInviteSuccess] = useState("");
+
+  // Portfolio Strategy Modal state
+  const [showStrategyModal, setShowStrategyModal] = useState<boolean>(false);
+  const [selectedStrategy, setSelectedStrategy] = useState<string>("AUTO_RISK");
+  const [customAllocations, setCustomAllocations] = useState<Record<string, number>>({
+    EQUITY: 15,
+    INDEX_ETF: 25,
+    BOND: 20,
+    MONEY_MARKET: 10,
+    GOLD: 10,
+    CRYPTO: 5,
+    REAL_ESTATE: 10,
+    LAND: 5,
+  });
+  const [strategySaving, setStrategySaving] = useState<boolean>(false);
+
+  const handleOpenStrategyModal = () => {
+    if (portfolioReview?.portfolio_strategy) {
+      setSelectedStrategy(portfolioReview.portfolio_strategy);
+    }
+    setShowStrategyModal(true);
+  };
+
+  const handleSaveStrategy = async () => {
+    setStrategySaving(true);
+    try {
+      const res = await updatePortfolioStrategy(
+        selectedStrategy,
+        selectedStrategy === "CUSTOM" ? customAllocations : undefined
+      );
+      if (res?.portfolio_review) {
+        setPortfolioReview(res.portfolio_review);
+      }
+      setShowStrategyModal(false);
+    } catch (e: any) {
+      alert("Gagal memperbarui strategi: " + e.message);
+    } finally {
+      setStrategySaving(false);
+    }
+  };
 
   const refreshWallets = async () => {
     setLoading(true);
@@ -495,11 +539,20 @@ export default function WalletsPage() {
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Referensi Acuan: <strong className="text-foreground">{portfolioReview.reference_profile_name}</strong>{" "}
+                  Referensi Acuan: <strong className="text-foreground">{portfolioReview.portfolio_strategy_label || portfolioReview.reference_profile_name}</strong>{" "}
                   &bull; Estimasi CAGR <strong className="text-[#8a6300] dark:text-[#f0b000]">{portfolioReview.expected_cagr}</strong>{" "}
                   &bull; Porsi Investasi: <strong className="text-foreground">{portfolioReview.invested_ratio_pct}%</strong> dari Kekayaan Bersih
                 </p>
               </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={handleOpenStrategyModal}
+                className="px-3.5 py-2 rounded-xl bg-secondary hover:bg-secondary/80 border border-border text-foreground text-xs font-semibold flex items-center gap-2 shadow-sm transition"
+              >
+                <span>⚙️ Ganti Strategi / Custom Target %</span>
+              </button>
             </div>
           </div>
 
@@ -1308,6 +1361,160 @@ export default function WalletsPage() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Portfolio Strategy & Target Allocation Modal */}
+      {showStrategyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-border flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-violet-500/10 text-violet-500 flex items-center justify-center font-bold">
+                  ⚙️
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Pilih Model Strategi Portofolio</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Atur target alokasi acuan untuk rebalancing &amp; review kesehatan portofolio Anda.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowStrategyModal(false)}
+                className="p-2 rounded-xl hover:bg-secondary text-muted-foreground"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4">
+              <div className="space-y-2.5">
+                {[
+                  {
+                    key: "AUTO_RISK",
+                    label: "Otomatis Sesuai Profil Risiko",
+                    desc: "Mengikuti profil risiko (Konservatif/Moderat/Agresif) dan Preferensi Syariah Anda.",
+                  },
+                  {
+                    key: "INDEX_ETF_CORE",
+                    label: "Passive Index & ETF Core",
+                    desc: "Inti portofolio pada ETF/reksa dana indeks (IDX30/LQ45/S&P 500), dilengkapi SBN, emas, dan kas taktis.",
+                  },
+                  {
+                    key: "REAL_ASSET_PROPERTY",
+                    label: "Aset Riil: Properti & Tanah",
+                    desc: "Kekayaan berbasis aset riil produktif (properti sewa/kos, tanah kavling) diseimbangkan aset likuid.",
+                  },
+                  {
+                    key: "HIGH_GROWTH_CRYPTO",
+                    label: "High-Growth: Saham Tech, ETF & Crypto",
+                    desc: "Akselerasi modal agresif jangka panjang lewat saham growth, ETF teknologi, dan crypto bluechip.",
+                  },
+                  {
+                    key: "SHARIA_REAL_ASSET",
+                    label: "Syariah Holistik & Aset Riil",
+                    desc: "Saham/indeks syariah ISSI, Sukuk Negara, properti & tanah produktif, emas, dan pasar uang syariah.",
+                  },
+                  {
+                    key: "CUSTOM",
+                    label: "Custom Target Alokasi (Atur Sendiri %)",
+                    desc: "Tentukan sendiri persentase ideal target Anda untuk setiap kelas aset (total harus 100%).",
+                  },
+                ].map((strat) => (
+                  <label
+                    key={strat.key}
+                    className={`p-3.5 rounded-2xl border flex items-start gap-3 cursor-pointer transition ${
+                      selectedStrategy === strat.key
+                        ? "bg-violet-500/10 border-violet-500 text-foreground shadow-sm"
+                        : "bg-secondary/40 border-border text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="portfolioStrategy"
+                      value={strat.key}
+                      checked={selectedStrategy === strat.key}
+                      onChange={() => setSelectedStrategy(strat.key)}
+                      className="accent-violet-600 mt-1"
+                    />
+                    <div>
+                      <div className="text-xs font-bold text-foreground">{strat.label}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{strat.desc}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+
+              {selectedStrategy === "CUSTOM" && (
+                <div className="p-4 rounded-2xl bg-secondary/50 border border-border space-y-3 mt-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-foreground">Target Alokasi Kustom (%)</span>
+                    <span
+                      className={`text-xs font-bold font-mono px-2 py-0.5 rounded-md ${
+                        Object.values(customAllocations).reduce((a, b) => a + (Number(b) || 0), 0) === 100
+                          ? "bg-emerald-500/15 text-emerald-500"
+                          : "bg-amber-500/15 text-amber-500"
+                      }`}
+                    >
+                      Total: {Object.values(customAllocations).reduce((a, b) => a + (Number(b) || 0), 0)}% (Harus 100%)
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    {[
+                      { key: "INDEX_ETF", label: "Indeks & ETF" },
+                      { key: "EQUITY", label: "Saham & Ekuitas" },
+                      { key: "BOND", label: "Obligasi / SBN" },
+                      { key: "MONEY_MARKET", label: "Pasar Uang" },
+                      { key: "GOLD", label: "Emas" },
+                      { key: "CRYPTO", label: "Crypto" },
+                      { key: "REAL_ESTATE", label: "Properti Sewa" },
+                      { key: "LAND", label: "Tanah & Kavling" },
+                    ].map((ac) => (
+                      <div key={ac.key} className="space-y-1">
+                        <label className="text-[11px] text-muted-foreground font-semibold">{ac.label}</label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={customAllocations[ac.key] || 0}
+                            onChange={(e) =>
+                              setCustomAllocations((prev) => ({
+                                ...prev,
+                                [ac.key]: parseFloat(e.target.value) || 0,
+                              }))
+                            }
+                            className="w-full px-2.5 py-1.5 rounded-xl bg-card border border-border text-foreground font-mono font-bold text-xs"
+                          />
+                          <span className="text-muted-foreground font-mono">%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-border flex items-center justify-end gap-3 bg-card">
+              <button
+                type="button"
+                onClick={() => setShowStrategyModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-muted-foreground hover:text-foreground"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveStrategy}
+                disabled={strategySaving}
+                className="px-5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold shadow-md transition disabled:opacity-50"
+              >
+                {strategySaving ? "Menyimpan..." : "Simpan Strategi Acuan"}
+              </button>
+            </div>
           </div>
         </div>
       )}

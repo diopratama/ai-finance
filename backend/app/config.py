@@ -23,6 +23,21 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = "placeholder_key"
     LLM_MODEL_NAME: str = "gpt-4o"
     LLM_TIMEOUT: float = 60.0
+    LLM_MAX_TOKENS: int = 2048
+    LLM_REPORT_MAX_TOKENS: int = 4096
+    LLM_MAX_CONTINUATIONS: int = 3
+    LLM_MAX_CONCURRENCY: int = 2
+
+    # Exa Search API (primary internet access; injected from Vault via ai-finance-secret)
+    EXA_API_KEY: Optional[str] = ""
+    EXA_TIMEOUT: float = 8.0
+
+    # Multi-Agent Investment Research
+    RECOMMENDATION_LIMIT: int = 8
+    ENFORCE_RESEARCH_QUOTA: bool = False  # Free for all users for now; flip to True to enable quotas later
+    DEFAULT_RESEARCH_QUOTA: int = 10
+    RESEARCH_HISTORY_RETENTION: int = 50
+    REDIS_URL: Optional[str] = ""
 
     # Telegram Bot Integration
     TELEGRAM_BOT_TOKEN: Optional[str] = None

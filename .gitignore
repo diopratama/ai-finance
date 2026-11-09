@@ -30,6 +30,7 @@ htmlcov/
 *.sqlite3
 pgdata/
 data/
+!backend/data/
 
 # Node.js / Frontend
 node_modules/

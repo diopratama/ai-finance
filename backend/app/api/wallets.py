@@ -1,4 +1,5 @@
-from typing import Optional, List
+import json
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
@@ -69,6 +70,11 @@ class UpdateWalletMemberRequest(BaseModel):
     role: str  # "EDITOR" | "VIEWER"
 
 
+class UpdatePortfolioStrategyRequest(BaseModel):
+    strategy: str
+    custom_allocations: Optional[Dict[str, float]] = None
+
+
 def _build_user_portfolio_review(user: User, wallets: List[Wallet], db: Session) -> dict:
     profile = db.query(FinancialProfile).filter(FinancialProfile.user_id == user.id).first()
     risk_tolerance = (profile.risk_tolerance if profile and profile.risk_tolerance else "MODERATE").upper()
@@ -76,6 +82,14 @@ def _build_user_portfolio_review(user: User, wallets: List[Wallet], db: Session)
     monthly_exp = (profile.monthly_living_expense if profile and (profile.monthly_living_expense or 0) > 0 else 8_000_000.0)
     is_married = ((profile.marital_status if profile else "SINGLE") or "SINGLE").upper() == "MARRIED"
     deps = int(profile.dependents_count or 0) if profile else 0
+    strategy = getattr(profile, "portfolio_strategy", None) if profile else None
+    custom_raw = getattr(profile, "custom_allocations_json", None) if profile else None
+    custom_alloc = None
+    if custom_raw:
+        try:
+            custom_alloc = json.loads(custom_raw)
+        except Exception:
+            custom_alloc = None
 
     liquid_cash = sum(
         max(0.0, convert_to_idr(w.balance, w.currency))
@@ -92,6 +106,8 @@ def _build_user_portfolio_review(user: User, wallets: List[Wallet], db: Session)
         monthly_expenses=monthly_exp,
         is_married=is_married,
         dependents_count=deps,
+        strategy=strategy,
+        custom_allocations=custom_alloc,
     )
 
 
@@ -102,6 +118,32 @@ def get_portfolio_review(
 ):
     wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
     return _build_user_portfolio_review(current_user, wallets, db)
+
+
+@router.put("/portfolio-strategy")
+def update_portfolio_strategy(
+    req: UpdatePortfolioStrategyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    profile = db.query(FinancialProfile).filter(FinancialProfile.user_id == current_user.id).first()
+    if not profile:
+        profile = FinancialProfile(user_id=current_user.id)
+        db.add(profile)
+    profile.portfolio_strategy = (req.strategy or "AUTO_RISK").strip().upper()
+    if req.custom_allocations is not None:
+        profile.custom_allocations_json = json.dumps(req.custom_allocations)
+    db.commit()
+    db.refresh(profile)
+
+    wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+    review = _build_user_portfolio_review(current_user, wallets, db)
+    return {
+        "success": True,
+        "portfolio_strategy": profile.portfolio_strategy,
+        "custom_allocations": json.loads(profile.custom_allocations_json) if profile.custom_allocations_json else {},
+        "portfolio_review": review,
+    }
 
 
 @router.get("")

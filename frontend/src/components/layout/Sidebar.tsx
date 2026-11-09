@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   UserCog,
   ShieldAlert,
+  TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppLogo } from "@/components/AppLogo";
@@ -22,6 +23,7 @@ import { getStoredUser, AuthUser } from "@/lib/api";
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/wallets", label: "Dompet & Akun", icon: Wallet },
+  { href: "/investment-research", label: "Riset Investasi AI", icon: TrendingUp, badge: "Swarm" },
   { href: "/budgets", label: "Alokasi Anggaran", icon: Target, badge: "Gajian" },
   { href: "/transactions", label: "Transaksi", icon: ArrowLeftRight },
   { href: "/bot-pairing", label: "Chatbot (WA & TG)", icon: Bot },

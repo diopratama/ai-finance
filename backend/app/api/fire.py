@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -52,9 +53,20 @@ def get_fire_profile(current_user: User = Depends(get_current_user), db: Session
         monthly_savings=0.0,
     )
     sharia_pref = bool(getattr(profile, "sharia_preference", False))
+    user_strategy = getattr(profile, "portfolio_strategy", None)
+    custom_raw = getattr(profile, "custom_allocations_json", None)
+    user_custom_alloc = None
+    if custom_raw:
+        try:
+            user_custom_alloc = json.loads(custom_raw)
+        except Exception:
+            user_custom_alloc = None
+
     allocations = get_asset_allocation_recommendation(
         profile.risk_tolerance,
         sharia_preference=sharia_pref,
+        strategy=user_strategy,
+        custom_allocations=user_custom_alloc,
     )
 
     liquid_cash = sum(
@@ -71,6 +83,8 @@ def get_fire_profile(current_user: User = Depends(get_current_user), db: Session
         monthly_expenses=profile.monthly_living_expense or 8_000_000.0,
         is_married=((profile.marital_status or "SINGLE").upper() == "MARRIED"),
         dependents_count=int(profile.dependents_count or 0),
+        strategy=user_strategy,
+        custom_allocations=user_custom_alloc,
     )
 
     return {

@@ -35,6 +35,7 @@ RUN useradd -m -u 1001 -s /bin/bash appuser && chown appuser:appuser /app
 COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 COPY --chown=appuser:appuser app/ /app/app/
 COPY --chown=appuser:appuser skills/ /app/skills/
+COPY --chown=appuser:appuser data/ /app/data/
 COPY --chown=appuser:appuser tests/ /app/tests/
 
 USER appuser

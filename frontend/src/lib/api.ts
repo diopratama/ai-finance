@@ -15,6 +15,8 @@ import {
   PlannerStreamMeta,
   PortfolioReview,
   AccountBackupItem,
+  InvestmentHistoryItem,
+  ShariaStockIssuer,
 } from "./types";
 
 const API_BASE = (
@@ -816,4 +818,70 @@ export async function calculateCustomFIRE(params: {
   annual_return_rate: number;
 }): Promise<FIREMetrics> {
   return apiFetch("/fire/calculate", { method: "POST", body: JSON.stringify(params) });
+}
+
+export async function updatePortfolioStrategy(
+  strategy: string,
+  custom_allocations?: Record<string, number>
+): Promise<{
+  success: boolean;
+  portfolio_strategy: string;
+  custom_allocations: Record<string, number>;
+  portfolio_review: PortfolioReview;
+}> {
+  return apiFetch("/wallets/portfolio-strategy", {
+    method: "PUT",
+    body: JSON.stringify({ strategy, custom_allocations }),
+  });
+}
+
+// ----------------- MULTI-AGENT INVESTMENT RESEARCH -----------------
+export async function getInvestmentQuote(market: string, symbol: string, timeframe = "1D"): Promise<any> {
+  return apiFetch(`/investment/quote?market=${encodeURIComponent(market)}&symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`);
+}
+
+export async function getShariaStocksReference(query?: string): Promise<{
+  total: number;
+  source_name?: string;
+  source_as_of?: string;
+  valid_until?: string;
+  counts?: { Ya: number; Tidak: number };
+  issuers: ShariaStockIssuer[];
+}> {
+  const q = query ? `?query=${encodeURIComponent(query)}` : "";
+  return apiFetch(`/investment/sharia-stocks${q}`);
+}
+
+export async function stopInvestmentTask(task_id: string): Promise<{ success: boolean; stopped: boolean; task_id: string }> {
+  return apiFetch("/investment/stop", {
+    method: "POST",
+    body: JSON.stringify({ task_id }),
+  });
+}
+
+export async function chatWithInvestmentAgent(payload: {
+  symbol: string;
+  market: string;
+  history: Array<{ role: string; content: string }>;
+  analysis_context: any;
+}): Promise<{ response: string }> {
+  return apiFetch("/investment/chat", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getInvestmentHistory(market?: string, limit = 20): Promise<InvestmentHistoryItem[]> {
+  const m = market ? `?market=${encodeURIComponent(market)}&limit=${limit}` : `?limit=${limit}`;
+  return apiFetch(`/investment/history${m}`);
+}
+
+export async function getInvestmentHistoryDetail(id: string): Promise<any> {
+  return apiFetch(`/investment/history/${encodeURIComponent(id)}`);
+}
+
+export async function deleteInvestmentHistory(id: string): Promise<{ success: boolean; deleted_id: string }> {
+  return apiFetch(`/investment/history/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }

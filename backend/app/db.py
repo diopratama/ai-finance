@@ -61,6 +61,7 @@ class User(Base):
     financial_profile = relationship("FinancialProfile", uselist=False, back_populates="user", cascade="all, delete-orphan")
     cfp_chats = relationship("CFPChatMessage", back_populates="user", cascade="all, delete-orphan")
     account_backups = relationship("AccountBackup", back_populates="user", cascade="all, delete-orphan")
+    investment_history = relationship("InvestmentAnalysisHistory", back_populates="user", cascade="all, delete-orphan")
 
 
 class Wallet(Base):
@@ -214,6 +215,8 @@ class FinancialProfile(Base):
     sharia_preference = Column(Boolean, default=False, nullable=False)
     memory_notes = Column(Text, nullable=True)  # Newline/JSON bullet notes captured from chat
     confirmed_profile_fields = Column(Text, default="[]", nullable=False)  # JSON array of user-confirmed field keys
+    portfolio_strategy = Column(String(48), default="AUTO_RISK", nullable=False)  # AUTO_RISK | INDEX_ETF_CORE | REAL_ASSET_PROPERTY | HIGH_GROWTH_CRYPTO | SHARIA_REAL_ASSET | CUSTOM
+    custom_allocations_json = Column(Text, default="{}", nullable=False)  # JSON dict of custom asset class target percentages
     fire_target_amount = Column(Float, default=3000000000.0, nullable=False)
     emergency_fund_target = Column(Float, default=60000000.0, nullable=False)
     created_at = Column(DateTime, default=_utc_now, nullable=False)
@@ -246,6 +249,29 @@ class AccountBackup(Base):
     created_at = Column(DateTime, default=_utc_now, nullable=False)
 
     user = relationship("User", back_populates="account_backups")
+
+
+class InvestmentAnalysisHistory(Base):
+    __tablename__ = "investment_analysis_history"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(String(64), nullable=False, index=True)
+    market = Column(String(32), nullable=False)
+    analysis_type = Column(String(16), default="analyze", nullable=False)  # "analyze" | "recommend"
+    investment_horizon = Column(String(16), default="ALL", nullable=False)  # "ALL" | "SHORT" | "MEDIUM" | "LONG"
+    symbol = Column(String(32), default="", nullable=False)
+    status = Column(String(20), default="completed", nullable=False)
+    decision = Column(String(32), nullable=True)  # "ACCUMULATE", "BUY_ON_DIP", "HOLD", "REDUCE"
+    confidence = Column(Float, nullable=True)
+    symbols_scanned = Column(Integer, default=0, nullable=False)
+    exa_news_count = Column(Integer, default=0, nullable=False)
+    report_preview = Column(Text, nullable=True)
+    input_json = Column(Text, default="{}", nullable=False)
+    result_json = Column(Text, default="{}", nullable=False)
+    created_at = Column(DateTime, default=_utc_now, nullable=False, index=True)
+
+    user = relationship("User", back_populates="investment_history")
 
 
 # Database engine with resilience for remote server IP
@@ -286,6 +312,8 @@ _SCHEMA_MIGRATIONS = {
     ("financial_profiles", "sharia_preference"): text("ALTER TABLE financial_profiles ADD COLUMN sharia_preference BOOLEAN DEFAULT FALSE"),
     ("financial_profiles", "memory_notes"): text("ALTER TABLE financial_profiles ADD COLUMN memory_notes TEXT"),
     ("financial_profiles", "confirmed_profile_fields"): text("ALTER TABLE financial_profiles ADD COLUMN confirmed_profile_fields TEXT DEFAULT '[]'"),
+    ("financial_profiles", "portfolio_strategy"): text("ALTER TABLE financial_profiles ADD COLUMN portfolio_strategy VARCHAR(48) DEFAULT 'AUTO_RISK'"),
+    ("financial_profiles", "custom_allocations_json"): text("ALTER TABLE financial_profiles ADD COLUMN custom_allocations_json TEXT DEFAULT '{}'"),
     ("users", "is_verified"): text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT FALSE"),
     ("users", "verification_code"): text("ALTER TABLE users ADD COLUMN verification_code VARCHAR(8)"),
     ("users", "verification_expires_at"): text("ALTER TABLE users ADD COLUMN verification_expires_at TIMESTAMP"),

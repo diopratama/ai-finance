@@ -81,6 +81,12 @@ export interface PortfolioBestPracticeItem {
   detail: string;
 }
 
+export interface PortfolioStrategyPreset {
+  key: string;
+  label: string;
+  description: string;
+}
+
 export interface PortfolioReview {
   has_investment_wallets: boolean;
   investment_wallets_count: number;
@@ -89,6 +95,8 @@ export interface PortfolioReview {
     name: string;
     type: string;
     balance: number;
+    currency?: string;
+    balance_in_base?: number;
     asset_class: string;
     asset_class_label: string;
   }>;
@@ -98,6 +106,9 @@ export interface PortfolioReview {
   invested_ratio_pct: number;
   risk_profile: string;
   sharia_preference: boolean;
+  portfolio_strategy?: string;
+  portfolio_strategy_label?: string;
+  available_strategies?: PortfolioStrategyPreset[];
   reference_profile_name: string;
   reference_description: string;
   expected_cagr: string;
@@ -107,6 +118,97 @@ export interface PortfolioReview {
   allocations_comparison: PortfolioAllocationComparison[];
   best_practices: PortfolioBestPracticeItem[];
   recommendations: string[];
+}
+
+export interface InvestmentQuote {
+  price?: number;
+  change?: number;
+  change_pct?: number;
+  high?: number;
+  low?: number;
+  open?: number;
+  volume?: number;
+  as_of?: string;
+  provider?: string;
+}
+
+export interface MultiHorizonItem {
+  horizon: string;
+  stance: string;
+  target_range: string;
+  thesis: string;
+  catalysts?: string[];
+  compounding_factors?: string[];
+  risks?: string[];
+}
+
+export interface InvestmentRecommendation {
+  symbol: string;
+  market: string;
+  stance: string;
+  confidence_pct: number;
+  fundamental_quality_score: number;
+  sharia_compliance?: {
+    is_sharia: boolean;
+    classification: string;
+    notes: string;
+  };
+  valuation_summary?: {
+    fair_value_estimate: string;
+    current_valuation_status: string;
+    metric_rationale: string;
+  };
+  multi_horizon_outlook?: {
+    short_term?: MultiHorizonItem;
+    medium_term?: MultiHorizonItem;
+    long_term?: MultiHorizonItem;
+  };
+  portfolio_and_dca_simulation?: {
+    risk_profile_match: string;
+    recommended_max_allocation_pct: number;
+    suggested_monthly_dca_amount: number;
+    action_plan: string;
+  };
+  executive_thesis: string;
+  key_monitoring_metrics?: string[];
+}
+
+export interface InvestmentSwarmResult {
+  symbol: string;
+  market: string;
+  timestamp: string;
+  analyst_reports: Record<string, string>;
+  investment_recommendation: InvestmentRecommendation;
+  news_sources?: Array<{
+    title: string;
+    url: string;
+    snippet?: string;
+    published_date?: string;
+    source_engine?: string;
+  }>;
+}
+
+export interface InvestmentHistoryItem {
+  id: string;
+  run_id: string;
+  market: string;
+  symbol: string;
+  investment_horizon: string;
+  decision?: string;
+  confidence?: number;
+  status: string;
+  report_preview?: string;
+  exa_news_count: number;
+  created_at?: string;
+}
+
+export interface ShariaStockIssuer {
+  ticker: string;
+  name: string;
+  sector?: string;
+  subsector?: string;
+  issi_status: string;
+  effective_date?: string;
 }
 
 export interface Category {

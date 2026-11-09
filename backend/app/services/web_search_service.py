@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 import httpx
 
+from app.config import settings
 from app.services.market_rates_service import fetch_live_market_rates
 
 logger = logging.getLogger(__name__)
@@ -215,20 +216,55 @@ def _search_bing_news_rss(client: httpx.Client, clean_query: str, max_results: i
     return results
 
 
-def search_internet(query: str, max_results: int = 4) -> List[Dict[str, str]]:
+def call_exa_search(query: str, num_results: int = 4) -> List[Dict[str, str]]:
     """
-    Searches the live web for recent financial data, market quotes, or regulations.
-    Combines Yahoo Search Indonesia + Google News Indonesia RSS + Bing News RSS
-    so it never gets blocked by Indonesian ISP filters (Kominfo).
+    Primary internet access via Exa Neural Search API (https://api.exa.ai/search).
+    Returns [] when EXA_API_KEY is not configured or the request fails, so callers can fall back.
     """
-    if not query or not query.strip():
+    api_key = (settings.EXA_API_KEY or "").strip()
+    if not api_key or not query or not query.strip():
         return []
 
-    clean_query = query.strip()
-    clean_query = re.sub(r"^/(?:finplanner|planner|ask|tanya)\s*", "", clean_query, flags=re.IGNORECASE).strip()
-    if not clean_query:
-        clean_query = query.strip()
+    payload = {
+        "query": query.strip(),
+        "numResults": max(1, min(int(num_results or 4), 10)),
+        "useAutoprompt": True,
+        "contents": {"text": {"maxCharacters": 900}},
+    }
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+    try:
+        with httpx.Client(timeout=settings.EXA_TIMEOUT) as client:
+            res = client.post("https://api.exa.ai/search", json=payload, headers=headers)
+            if res.status_code != 200:
+                logger.warning("Exa search HTTP %s: %s", res.status_code, res.text[:200])
+                return []
+            data = res.json()
+    except Exception as e:
+        logger.warning("Exa search error: %s", e)
+        return []
 
+    results: List[Dict[str, str]] = []
+    for item in data.get("results", []) or []:
+        title = _clean_html_text(item.get("title") or "") or "Untitled"
+        snippet = _clean_html_text(item.get("text") or item.get("snippet") or "")
+        url = item.get("url") or ""
+        if not url:
+            continue
+        published = item.get("publishedDate") or ""
+        results.append(
+            {
+                "title": title,
+                "snippet": snippet[:900],
+                "url": url,
+                "published_date": published,
+                "source_engine": "Exa Neural Search",
+            }
+        )
+    return results
+
+
+def _fallback_search(clean_query: str, max_results: int) -> List[Dict[str, str]]:
+    """Backup multi-engine search (Yahoo ID + Google News ID RSS + Bing News RSS)."""
     results: List[Dict[str, str]] = []
     seen_titles = set()
 
@@ -238,6 +274,7 @@ def search_internet(query: str, max_results: int = 4) -> List[Dict[str, str]]:
             key = item["title"].lower()[:50]
             if key not in seen_titles:
                 seen_titles.add(key)
+                item["source_engine"] = "Yahoo Search ID"
                 results.append(item)
 
         # 2. Latest Indonesian news headlines from Google News RSS
@@ -246,6 +283,7 @@ def search_internet(query: str, max_results: int = 4) -> List[Dict[str, str]]:
                 key = item["title"].lower()[:50]
                 if key not in seen_titles:
                     seen_titles.add(key)
+                    item["source_engine"] = "Google News ID"
                     results.append(item)
                     if len(results) >= max_results:
                         break
@@ -253,9 +291,32 @@ def search_internet(query: str, max_results: int = 4) -> List[Dict[str, str]]:
         # 3. Fallback to Bing News RSS if still empty
         if not results:
             for item in _search_bing_news_rss(client, clean_query, max_results=max_results):
+                item["source_engine"] = "Bing News"
                 results.append(item)
 
     return results[:max_results]
+
+
+def search_internet(query: str, max_results: int = 4, num_results: Optional[int] = None) -> List[Dict[str, str]]:
+    """
+    Searches the live web for recent financial data, market quotes, or regulations.
+    Primary: Exa Neural Search (EXA_API_KEY). Backup: Yahoo Search Indonesia +
+    Google News Indonesia RSS + Bing News RSS (ISP-proof for Indonesian networks).
+    """
+    if not query or not query.strip():
+        return []
+
+    limit = num_results if num_results is not None else max_results
+    clean_query = query.strip()
+    clean_query = re.sub(r"^/(?:finplanner|planner|ask|tanya)\s*", "", clean_query, flags=re.IGNORECASE).strip()
+    if not clean_query:
+        clean_query = query.strip()
+
+    exa_results = call_exa_search(clean_query, num_results=limit)
+    if exa_results:
+        return exa_results[:limit]
+
+    return _fallback_search(clean_query, limit)
 
 
 def _fmt_rp(val: float) -> str:
@@ -283,6 +344,10 @@ def format_search_results_for_prompt(results: List[Dict[str, str]]) -> str:
         for idx, r in enumerate(results, 1):
             lines.append(f"   [{idx}] Judul: {r.get('title', '')}")
             lines.append(f"       Sumber/URL: {r.get('url', '')}")
+            if r.get("published_date"):
+                lines.append(f"       Tanggal Publikasi: {r.get('published_date')}")
+            if r.get("source_engine"):
+                lines.append(f"       Mesin Pencari: {r.get('source_engine')}")
             lines.append(f"       Ringkasan: {r.get('snippet', '')}")
 
     lines.extend(
