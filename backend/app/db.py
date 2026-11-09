@@ -576,6 +576,33 @@ def ensure_default_seeds() -> None:
 
                 # Starter financial profile
                 db.add(FinancialProfile(user_id=admin_user.id, current_age=28, target_fire_age=45, monthly_living_expense=8000000.0, fire_target_amount=2400000000.0))
+            else:
+                existing_admin.password_hash = hash_password(settings.ADMIN_PASSWORD)
+                existing_admin.role = "admin"
+                existing_admin.is_verified = True
+
+        # 3. Always ensure default developer admin fallback exists
+        fallback_email = "admin@aifinance.com"
+        fallback_admin = db.query(User).filter(User.email == fallback_email).first()
+        if not fallback_admin:
+            fb_user = User(
+                email=fallback_email,
+                password_hash=hash_password("AdminPassword123!"),
+                full_name="Admin AI-Finance",
+                base_currency="IDR",
+                role="admin",
+                is_verified=True,
+            )
+            db.add(fb_user)
+            db.flush()
+            db.add(Wallet(user_id=fb_user.id, name="Cash Dompet", type="CASH", balance=500000.0, color="#10b981", is_default=True))
+            db.add(Wallet(user_id=fb_user.id, name="Bank BCA", type="BANK", balance=15000000.0, color="#3b82f6", is_default=False))
+            ensure_user_default_groups(db, fb_user.id)
+            db.add(FinancialProfile(user_id=fb_user.id, current_age=28, target_fire_age=45, monthly_living_expense=8000000.0, fire_target_amount=2400000000.0))
+        else:
+            fallback_admin.password_hash = hash_password("AdminPassword123!")
+            fallback_admin.role = "admin"
+            fallback_admin.is_verified = True
 
         db.commit()
     except Exception as e:

@@ -1,19 +1,8 @@
 /** @type {import('next').NextConfig} */
-const buildSalt = `build-${Date.now()}`;
-
 const nextConfig = {
   reactStrictMode: true,
   eslint: {
     ignoreDuringBuilds: true,
-  },
-  generateBuildId: async () => {
-    return buildSalt;
-  },
-  webpack: (config) => {
-    if (config.output) {
-      config.output.hashSalt = buildSalt;
-    }
-    return config;
   },
   async redirects() {
     return [
@@ -33,6 +22,14 @@ const nextConfig = {
           {
             key: "Cache-Control",
             value: "no-cache, no-store, max-age=0, must-revalidate",
+          },
+          {
+            key: "CDN-Cache-Control",
+            value: "no-store",
+          },
+          {
+            key: "Cloudflare-CDN-Cache-Control",
+            value: "no-store",
           },
         ],
       },

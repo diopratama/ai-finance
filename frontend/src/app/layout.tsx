@@ -4,6 +4,9 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AppShell } from "@/components/layout/AppShell";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export const metadata: Metadata = {
   title: "AI-Finance | Smart Wealth, Payday Budgeting & AI Financial Planner",
   description:
