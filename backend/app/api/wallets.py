@@ -22,6 +22,12 @@ from app.services.fire_engine import (
     infer_wallet_asset_class,
     is_investment_wallet,
 )
+from app.services.market_rates_service import (
+    convert_to_idr,
+    fetch_live_market_rates,
+    format_currency_with_base,
+    normalize_currency_unit,
+)
 
 router = APIRouter(prefix="/wallets", tags=["Wallets"])
 
@@ -41,6 +47,7 @@ class UpdateWalletRequest(BaseModel):
     type: Optional[str] = None
     asset_class: Optional[str] = None
     balance: Optional[float] = None
+    currency: Optional[str] = None
     color: Optional[str] = None
     is_default: Optional[bool] = None
     is_archived: Optional[bool] = None
@@ -71,7 +78,7 @@ def _build_user_portfolio_review(user: User, wallets: List[Wallet], db: Session)
     deps = int(profile.dependents_count or 0) if profile else 0
 
     liquid_cash = sum(
-        max(0.0, w.balance)
+        max(0.0, convert_to_idr(w.balance, w.currency))
         for w in wallets
         if not is_investment_wallet(w.name, w.type, getattr(w, "asset_class", None))
         and not any(k in (w.type or "").upper() for k in ("CREDIT", "KREDIT", "PAYLATER", "LOAN", "UTANG", "HUTANG", "CC"))
@@ -104,9 +111,10 @@ def list_wallets(
     db: Session = Depends(get_db),
 ):
     wallets = get_accessible_wallets(db, current_user.id, min_role="VIEWER")
+    market_rates = fetch_live_market_rates()
 
-    personal_balance = sum(w.balance for w in wallets if w.user_id == current_user.id)
-    shared_balance = sum(w.balance for w in wallets if w.user_id != current_user.id)
+    personal_balance = sum(convert_to_idr(w.balance, w.currency) for w in wallets if w.user_id == current_user.id)
+    shared_balance = sum(convert_to_idr(w.balance, w.currency) for w in wallets if w.user_id != current_user.id)
     total_balance = personal_balance + shared_balance
 
     alloc = compute_monthly_allocation_data(current_user, db, month or get_current_month_key())
@@ -139,6 +147,9 @@ def list_wallets(
         explicit_ac = getattr(w, "asset_class", None)
         resolved_ac = infer_wallet_asset_class(w.name, w.type, explicit_ac)
         is_inv = resolved_ac is not None
+        norm_currency = normalize_currency_unit(w.currency)
+        base_val = convert_to_idr(w.balance, norm_currency)
+        fmt_info = format_currency_with_base(w.balance, norm_currency)
 
         serialized_wallets.append({
             "id": w.id,
@@ -148,7 +159,10 @@ def list_wallets(
             "asset_class_label": ASSET_CLASS_LABELS.get(resolved_ac, None) if resolved_ac else None,
             "is_investment": is_inv,
             "balance": round(w.balance, 2),
-            "currency": w.currency,
+            "currency": norm_currency,
+            "balance_in_base": round(base_val, 2),
+            "formatted_native": fmt_info["native"],
+            "formatted_base": fmt_info["formatted_idr"],
             "color": w.color,
             "is_default": w.is_default,
             "is_shared": is_shared,
@@ -159,7 +173,7 @@ def list_wallets(
             "allocated_budget": alloc_by_wallet.get(w.id, {}).get("total_monthly_budget", 0.0),
             "remaining_commitment": alloc_by_wallet.get(w.id, {}).get("remaining_commitment", 0.0),
             "sinking_fund_held": alloc_by_wallet.get(w.id, {}).get("sinking_fund_held", 0.0),
-            "free_balance": alloc_by_wallet.get(w.id, {}).get("free_unallocated_balance", round(max(0.0, w.balance), 2)),
+            "free_balance": alloc_by_wallet.get(w.id, {}).get("free_unallocated_balance", round(max(0.0, base_val), 2)),
             "shortfall_amount": alloc_by_wallet.get(w.id, {}).get("shortfall_amount", 0.0),
             "funding_status": alloc_by_wallet.get(w.id, {}).get("status", "IDLE"),
             "assigned_items_count": alloc_by_wallet.get(w.id, {}).get("items_count", 0),
@@ -176,6 +190,7 @@ def list_wallets(
         "month_key": alloc["month_key"],
         "wallets": serialized_wallets,
         "portfolio_review": portfolio_review,
+        "market_rates": market_rates,
     }
 
 
@@ -198,7 +213,7 @@ def create_wallet(req: CreateWalletRequest, current_user: User = Depends(get_cur
         type=clean_type,
         asset_class=clean_ac,
         balance=req.balance,
-        currency=req.currency.strip().upper() or "IDR",
+        currency=normalize_currency_unit(req.currency),
         color=req.color or "#f0b000",
         is_default=req.is_default,
     )
@@ -247,6 +262,8 @@ def update_wallet(wallet_id: str, req: UpdateWalletRequest, current_user: User =
         wallet.asset_class = raw_ac if raw_ac in ASSET_CLASS_LABELS else None
     if "balance" in updates and updates["balance"] is not None:
         wallet.balance = float(updates["balance"])
+    if "currency" in updates and updates["currency"] is not None:
+        wallet.currency = normalize_currency_unit(updates["currency"])
     if "color" in updates and updates["color"] is not None:
         wallet.color = updates["color"]
     if "is_default" in updates and updates["is_default"] is not None:

@@ -40,8 +40,11 @@ Sistem ini aktif dan dapat diakses langsung pada: **[https://aifinance.fellow.my
 - **Sinking Fund Lintas Bulan**: Dukungan pos akumulasi dana bertahap (e.g., *Pajak Tahunan*, *Servis Mobil*, *Liburan Akhir Tahun*, *Umrah*) yang otomatis mempertahankan dan menggulirkan saldo tersisa ke bulan-bulan berikutnya (*Rollover Balance*).
 - **Grup Anggaran Fleksibel**: Pengelompokan dinamis (*Living Needs*, *Life Style*, *Predictable Saving*, *Zakat & Sedekah*, dll.) dengan dukungan buat grup baru, ubah nama, dan hapus/reassign.
 
-### 2. Dompet Multi-Akun & Dompet Bersama (Shared Wallets)
+### 2. Dompet Multi-Akun, Dompet Bersama (Shared Wallets) & Non-Cash / Valas
 - **Multi-Wallet Nyata**: Kelola kas harian (*Cash*), rekening bank (*Bank Mandiri, BCA, BRI, Jago*), dompet digital (*GoPay, OVO, ShopeePay*), hingga rekening investasi (*Bibit, Stockbit, Bareksa, RDN*) tanpa perlu koneksi Open Banking pihak ketiga.
+- **Dompet Non-Cash Emas (Satuan `GRAM`)**: Catat kepemilikan emas batangan/digital (Antam, Pegadaian, Treasury) dalam satuan gram fisik. Sistem melakukan *live conversion* otomatis ke Rupiah menggunakan kurs pasar emas terkini dan menggabungkannya ke total kekayaan (*net worth*).
+- **Dompet Valuta Asing (USD)**: Dukungan saldo mata uang asing (`USD`) dengan kurs konversi live USD/IDR otomatis.
+- **Live Market Rates Feed**: Ticker kurs live terintegrasi (Emas Spot/Antam per gram dan USD/IDR) dengan caching cerdas dan fallback protektif.
 - **Sharing Dompet Antar-Pengguna**: Fitur berbagi dompet dengan pasangan, keluarga, atau partner bisnis via email.
 - **Role-Based Access Control**:
   - `OWNER`: Pemilik dompet, memiliki kendali penuh (edit, hapus, kelola anggota).
@@ -74,22 +77,28 @@ Sistem ini aktif dan dapat diakses langsung pada: **[https://aifinance.fellow.my
 - **Distribusi Kategori**: Breakdown proporsi pengeluaran dan pemasukan per kategori.
 - **Mutasi Arus Kas per Dompet**: Rekapitulasi perputaran dana masuk dan keluar untuk setiap dompet aktif.
 
-### 5. Multimodal Bot Telegram & WhatsApp (All-Wallet Ops)
+### 5. Multimodal Bot Telegram & WhatsApp (All-Wallet Ops & AI Consultation)
 - **Pairing Aman 15 Menit**: Hubungkan akun WhatsApp atau Telegram pengguna lewat perintah `/pair <KODE>`.
 - **Input Multimodal**:
-  - Teks bahasa Indonesia kasual (*"kopi kenangan 28rb pake gopay"*, *"beli token listrik 100k"*).
+  - Teks bahasa Indonesia kasual (*"kopi kenangan 28rb pake gopay"*, *"beli emas 2.5 gram di antam"*, *"topup 50 usd"*).
   - Pesan suara / Voice note (ditranskrip via Speech-to-Text).
   - Foto nota struk belanja fisik (diekstraksi via Vision OCR).
 - **Operasi Finansial Lengkap Semua Dompet**:
-  - **Penambahan Saldo (`INCOME` / Topup)**: *"tambah saldo bibit 1jt"*, *"topup gopay 250rb"*, *"setor rdn bca 2jt"*, *"+500rb ke jago"*.
-  - **Pengurangan Saldo (`EXPENSE` / Penarikan)**: *"kurangi saldo cash 100rb uang parkir"*, *"tarik dana bibit 500rb"*, *"potong saldo mandiri 150rb admin"*.
-  - **Transfer Antar-Dompet (`TRANSFER`)**: *"transfer 1jt dari mandiri ke bibit"*, *"transfer bca ke gopay 200rb"*, *"topup gopay 100rb dari bca"*, *"pindah dana 500rb dari jago ke emas pegadaian"*.
-- **Perintah Laporan Instan**:
+  - **Penambahan Saldo (`INCOME` / Topup)**: *"tambah saldo bibit 1jt"*, *"beli emas 2 gram"*, *"topup 50 usd"*, *"setor rdn bca 2jt"*.
+  - **Pengurangan Saldo (`EXPENSE` / Penarikan)**: *"kopi susu 25rb bayar gopay"*, *"jual emas 1 gram"*, *"belanja $20 dari dompet usd"*, *"tarik dana bibit 500rb"*.
+  - **Transfer Antar-Dompet (`TRANSFER`)**: *"transfer 1jt dari mandiri ke bibit"*, *"transfer bca ke gopay 200rb"*, *"topup gopay 100rb dari bca"*.
+- **Konsultasi AI Financial Planner Langsung via Bot**:
+  - **One-Shot Query**: `/finplanner <pertanyaan>` — Tanya AI Financial Planner kapan saja (e.g. `/finplanner berapa harga emas hari ini dan prospek SBN?`).
+  - **Mode Sesi Interaktif**: Ketik `/finplanner` untuk masuk ke mode ngobrol interaktif dengan AI Financial Planner. Semua pesan berikutnya otomatis dijawab oleh AI hingga pengguna mengetik `/selesai` atau `/exit` untuk kembali ke mode pencatatan transaksi.
+- **Menu Tombol Slash Telegram**: Pendaftaran otomatis menu perintah resmi Telegram (`/saldo`, `/laporan`, `/portofolio`, `/finplanner`, `/selesai`, `/help`).
+- **Perintah Laporan & Saldo Instan**:
+  - `/saldo` — Cek saldo seluruh dompet, termasuk saldo native & setara Rupiah untuk emas (gram) dan USD.
   - `/laporan` — Ringkasan pemasukan, pengeluaran, net cashflow, dan pos terbesar bulan berjalan.
   - `/portofolio` — Ringkasan nilai investasi, skor keselarasan, dan saran rebalancing langsung di chat.
 
-### 6. AI Financial Planner Cerdas & Personalisasi Terpusat
+### 6. AI Financial Planner Cerdas dengan Real-Time Web Search
 - **Pustaka Keahlian Modular (*Skill Library*)**: Menerapkan 7 pilar financial planning (arus kas, utang/DSR, dana darurat, proteksi, investasi, pensiun, estate planning) + psikologi finansial.
+- **Real-Time Web Search Terintegrasi**: AI Financial Planner otomatis mendeteksi kebutuhan data pasar aktual (harga emas spot/Antam, kurs USD/IDR, suku bunga BI rate terkini, kupon SBN ritel ORI/Sukuk terbaru, inflasi, indeks IHSG, dan regulasi pajak terkini) dan melakukan pencarian internet real-time tanpa memerlukan API key berbayar.
 - **Adaptive Warm Mentor**: Berkomunikasi dengan empati, menyesuaikan gaya bahasa lawan bicara (`aku/kamu`, `gue/lo`, `saya/Anda`), tanpa spam disclaimer di setiap respon.
 - **Pengaturan Profil Terpusat (`/settings`)**:
   - Tab **Akun & Keamanan**: Nama lengkap mandatori, email terverifikasi (Resend API), mata uang acuan, dan ubah kata sandi.

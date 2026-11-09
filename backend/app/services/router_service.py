@@ -8,6 +8,11 @@ import httpx
 
 from app.config import settings
 from app.services.planner_skills_loader import build_planner_system_prompt, route_planner_skills
+from app.services.web_search_service import (
+    format_search_results_for_prompt,
+    search_internet,
+    should_search_internet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +151,21 @@ class RouterService:
                 break
 
         active_routing = routing or route_planner_skills(latest_user_msg, conversation_history)
-        system_instruction = build_planner_system_prompt(financial_context, active_routing)
+
+        web_search_context = ""
+        if should_search_internet(latest_user_msg):
+            try:
+                results = search_internet(latest_user_msg, max_results=3)
+                if results:
+                    web_search_context = format_search_results_for_prompt(results)
+            except Exception as e:
+                logger.debug("Live web search notice: %s", e)
+
+        system_instruction = build_planner_system_prompt(
+            financial_context,
+            active_routing,
+            web_search_context=web_search_context,
+        )
 
         messages_payload = [{"role": "system", "content": system_instruction}]
         for m in conversation_history:
@@ -216,6 +235,20 @@ class RouterService:
         """Backward-compatible alias delegating to generate_planner_response_stream."""
         async for chunk in self.generate_planner_response_stream(conversation_history, financial_context):
             yield chunk
+
+    async def generate_planner_response(
+        self,
+        conversation_history: list[dict],
+        financial_context: dict,
+        routing: Optional[dict] = None,
+    ) -> str:
+        """Generates a complete non-streaming response for Telegram/WhatsApp bot users."""
+        chunks: list[str] = []
+        async for chunk in self.generate_planner_response_stream(
+            conversation_history, financial_context, routing
+        ):
+            chunks.append(chunk)
+        return "".join(chunks).strip()
 
 
 router_service = RouterService()

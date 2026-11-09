@@ -1,6 +1,8 @@
 import math
 from typing import Dict, Any, List, Optional
 
+from app.services.market_rates_service import convert_to_idr, normalize_currency_unit
+
 
 def calculate_fire_metrics(
     current_age: int,
@@ -323,16 +325,20 @@ def evaluate_investment_portfolio(
         w_bal = float(getattr(w, "balance", 0.0) if not isinstance(w, dict) else w.get("balance", 0.0))
         w_id = getattr(w, "id", "") if not isinstance(w, dict) else w.get("id", "")
         w_explicit = getattr(w, "asset_class", None) if not isinstance(w, dict) else w.get("asset_class")
+        w_curr = getattr(w, "currency", "IDR") if not isinstance(w, dict) else w.get("currency", "IDR")
 
         ac = infer_wallet_asset_class(w_name, w_type, w_explicit)
         if ac:
             safe_bal = max(0.0, w_bal)
-            actual_by_class[ac] = actual_by_class.get(ac, 0.0) + safe_bal
+            safe_bal_idr = max(0.0, convert_to_idr(safe_bal, w_curr))
+            actual_by_class[ac] = actual_by_class.get(ac, 0.0) + safe_bal_idr
             investment_wallets_list.append({
                 "id": w_id,
                 "name": w_name,
                 "type": w_type,
                 "balance": round(safe_bal, 2),
+                "currency": normalize_currency_unit(w_curr),
+                "balance_in_base": round(safe_bal_idr, 2),
                 "asset_class": ac,
                 "asset_class_label": ASSET_CLASS_LABELS.get(ac, ac),
             })

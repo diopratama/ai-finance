@@ -22,7 +22,14 @@ from app.db import (
 from app.api.budgets import compute_budget_spent_map, get_current_month_key
 from app.api.transactions import get_transaction_summary
 from app.api.wallets import _build_user_portfolio_review
+from app.api.planner import ask_planner_direct
 from app.services.fire_engine import ASSET_CLASS_LABELS, infer_wallet_asset_class
+from app.services.market_rates_service import (
+    fetch_live_market_rates,
+    convert_to_idr,
+    format_currency_with_base,
+    format_currency_display_string,
+)
 from app.services.nlu_parser import match_budget_item_from_text, parse_transaction_text
 from app.services.router_service import router_service
 from app.auth import get_optional_user
@@ -48,11 +55,13 @@ def _format_bot_wallets_reply(user: User, db: Session) -> str:
             "⚠️ Anda belum memiliki dompet aktif.\n"
             "Silakan tambahkan dompet di web dashboard: https://aifinance.fellow.my.id/wallets"
         )
-    total_balance = sum(w.balance for w in wallets)
+    rates = fetch_live_market_rates()
+    total_balance = sum(convert_to_idr(w.balance, getattr(w, "currency", "IDR"), rates) for w in wallets)
     lines = ["💳 Saldo Dompet & Rekening Anda:\n"]
     for w in wallets:
+        curr = (getattr(w, "currency", None) or "IDR").upper()
         ac = infer_wallet_asset_class(w.name, w.type, getattr(w, "asset_class", None))
-        icon = "📈" if ac else ("💵" if w.type == "CASH" else ("🏦" if w.type == "BANK" else ("📱" if w.type == "EWALLET" else "💳")))
+        icon = "🪙" if (curr in ("GRAM", "XAU") or ac == "GOLD") else ("📈" if ac else ("💵" if w.type == "CASH" else ("🏦" if w.type == "BANK" else ("📱" if w.type == "EWALLET" else "💳"))))
         badges = []
         if w.is_default:
             badges.append("Utama")
@@ -61,9 +70,17 @@ def _format_bot_wallets_reply(user: User, db: Session) -> str:
         if ac:
             badges.append(ASSET_CLASS_LABELS.get(ac, "Investasi"))
         badge_str = f" ({', '.join(badges)})" if badges else ""
-        lines.append(f"• {icon} {w.name}{badge_str}: {_fmt_rp(w.balance)}")
+        if curr in ("GRAM", "XAU"):
+            idr_val = convert_to_idr(w.balance, curr, rates)
+            lines.append(f"• {icon} {w.name}{badge_str}: {w.balance:g} gram (≈ {_fmt_rp(idr_val)})")
+        elif curr == "USD":
+            idr_val = convert_to_idr(w.balance, curr, rates)
+            lines.append(f"• {icon} {w.name}{badge_str}: ${w.balance:,.2f} (≈ {_fmt_rp(idr_val)})")
+        else:
+            lines.append(f"• {icon} {w.name}{badge_str}: {_fmt_rp(w.balance)}")
 
-    lines.append(f"\n💰 Total Saldo Tersedia: {_fmt_rp(total_balance)} ({user.base_currency or 'IDR'})")
+    lines.append(f"\n💰 Total Saldo Tersedia (Setara IDR): {_fmt_rp(total_balance)}")
+    lines.append(f"📈 Kurs Live: 1 USD ≈ {_fmt_rp(rates['usd_to_idr'])} | 1 gr Emas ≈ {_fmt_rp(rates['gold_per_gram_idr'])}")
     return "\n".join(lines)
 
 
@@ -121,16 +138,86 @@ def _format_bot_portfolio_review_reply(user: User, db: Session) -> str:
     return "\n".join(lines)
 
 
+def _run_coro_sync(coro):
+    """Executes an async coroutine synchronously, whether or not an event loop is currently running."""
+    import asyncio
+    import concurrent.futures
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
+
+
 def _process_user_transaction_message(
     user: User,
     raw_text: str,
     source: str,
     receipt_meta: Optional[Dict[str, Any]],
     db: Session,
+    bot_link: Optional[BotLink] = None,
 ) -> Dict[str, Any]:
     """Helper to parse and save a transaction for a verified user, with smart Budget & Fund Location routing."""
     clean_cmd = (raw_text or "").strip()
     lower_cmd = clean_cmd.lower()
+
+    # Handle exit/selesai from interactive AI Planner mode
+    if clean_cmd in ("/selesai", "/exit", "/catat", "/transaksi", "/kembali"):
+        if bot_link:
+            bot_link.chat_mode = "TRANSACTION"
+            db.commit()
+        return {
+            "success": True,
+            "command": "EXIT_PLANNER",
+            "message": (
+                "✅ Selesai konsultasi AI.\n\n"
+                "Anda telah kembali ke mode pencatatan transaksi otomatis.\n"
+                "Kirim pesan nominal pengeluaran atau struk kapan saja, atau ketik /finplanner untuk berdiskusi dengan AI lagi."
+            ),
+        }
+
+    # Handle /finplanner command (one-shot or enter interactive mode)
+    if clean_cmd.startswith("/finplanner") or clean_cmd.startswith("/tanya") or clean_cmd.startswith("/ai"):
+        parts = clean_cmd.split(maxsplit=1)
+        if len(parts) > 1 and parts[1].strip():
+            # One-shot query to AI Financial Planner with internet access
+            question = parts[1].strip()
+            ai_reply = _run_coro_sync(ask_planner_direct(user, question, db))
+            return {
+                "success": True,
+                "command": "FINPLANNER_QUERY",
+                "message": f"🤖 AI Financial Planner (Real-Time Web):\n\n{ai_reply}",
+            }
+        else:
+            # Toggle into interactive AI chat mode
+            if bot_link:
+                bot_link.chat_mode = "PLANNER"
+                db.commit()
+            return {
+                "success": True,
+                "command": "ENTER_PLANNER",
+                "message": (
+                    "🧠 Mode Diskusi AI Financial Planner Aktif!\n\n"
+                    "Anda sekarang terhubung langsung dengan AI Financial Planner (didukung pencarian internet terkini untuk data emas, kurs USD, IHSG, SBN/ORI, inflasi & regulasi pajak).\n\n"
+                    "Silakan ketik pertanyaan Anda seputar alokasi keuangan, portofolio, atau strategi FIRE.\n\n"
+                    "💡 Ketik /selesai untuk keluar dan kembali ke mode catat transaksi otomatis."
+                ),
+            }
+
+    # If the user is currently in interactive PLANNER mode, route to AI directly
+    if bot_link and getattr(bot_link, "chat_mode", "TRANSACTION") == "PLANNER":
+        # Don't hijack system commands
+        if clean_cmd not in ("/saldo", "/laporan", "/portofolio", "/help"):
+            ai_reply = _run_coro_sync(ask_planner_direct(user, raw_text, db))
+            return {
+                "success": True,
+                "command": "PLANNER_CHAT",
+                "message": f"{ai_reply}\n\n────────────────\n💬 Ketik /selesai untuk kembali ke mode catat transaksi.",
+            }
 
     # Check if message is a query command (/saldo, /laporan, /portofolio, /help)
     if clean_cmd in ("/saldo", "/dompet", "/wallets") or (
@@ -159,20 +246,24 @@ def _process_user_transaction_message(
             "💡 Panduan Penggunaan AI-Finance Bot:\n\n"
             "• Tambah Dana ke Dompet Apapun:\n"
             "  - 'tambah saldo bca 500rb'\n"
-            "  - 'topup gopay 250rb'\n"
-            "  - 'setor ke bibit 2jt'\n\n"
+            "  - 'beli emas 2 gram'\n"
+            "  - 'topup 50 usd'\n"
+            "  - 'topup gopay 250rb'\n\n"
             "• Kurangi Dana / Catat Pengeluaran:\n"
             "  - 'kopi susu 25rb bayar gopay'\n"
-            "  - 'kurangi saldo mandiri 100rb'\n"
-            "  - 'tarik dana bibit 500rb'\n\n"
+            "  - 'jual emas 1 gram'\n"
+            "  - 'belanja $15 dari dompet usd'\n\n"
             "• Transfer Antar Semua Dompet:\n"
             "  - 'transfer 500rb dari mandiri ke jago'\n"
-            "  - 'transfer bca ke bibit 1jt'\n"
             "  - 'topup gopay 100rb dari bca'\n\n"
-            "• Perintah Cepat:\n"
-            "  - /saldo : Cek saldo semua dompet\n"
-            "  - /laporan : Cek laporan pemasukan & pengeluaran bulan ini\n"
-            "  - /portofolio : Review portofolio dompet investasi vs best practice"
+            "• Diskusi AI Financial Planner:\n"
+            "  - /finplanner <pertanyaan> : Tanya langsung ke AI\n"
+            "  - /finplanner : Masuk mode konsultasi AI santai\n"
+            "  - /selesai : Keluar dari mode konsultasi AI\n\n"
+            "• Perintah Ringkasan:\n"
+            "  - /saldo : Cek saldo semua dompet (termasuk USD & Emas live)\n"
+            "  - /laporan : Cek ringkasan pemasukan & pengeluaran bulanan\n"
+            "  - /portofolio : Review portofolio investasi vs best practice"
         )
         return {"success": True, "command": "HELP", "message": help_msg}
 
@@ -200,15 +291,18 @@ def _process_user_transaction_message(
                 "⚠️ Nominal transaksi tidak terdeteksi.\n\n"
                 "Contoh format yang bisa Anda kirimkan:\n"
                 "• 'kopi susu 25rb bayar gopay'\n"
+                "• 'beli emas 2.5 gram'\n"
                 "• 'topup gopay 100rb dari bca'\n"
                 "• 'transfer 500rb dari mandiri ke jago'\n"
                 "• 'isi bensin 100rb'\n"
-                "• 'gaji bulanan 12jt'"
+                "• 'gaji bulanan 12jt'\n"
+                "• /finplanner untuk berdiskusi dengan AI"
             ),
             "parsed": parsed,
         }
 
     tx_type = parsed["type"]
+    rates = fetch_live_market_rates()
 
     # Handle TRANSFER transaction
     if tx_type == "TRANSFER":
@@ -254,6 +348,9 @@ def _process_user_transaction_message(
                 "message": "⚠️ Dompet sumber dan dompet tujuan transfer sama.",
             }
 
+        w_curr = (getattr(source_wallet, "currency", None) or "IDR").upper()
+        amount_in_base = convert_to_idr(amount, w_curr, rates)
+
         source_wallet.balance -= amount
         target_wallet.balance += amount
 
@@ -264,7 +361,7 @@ def _process_user_transaction_message(
             type="TRANSFER",
             amount=amount,
             currency=source_wallet.currency,
-            amount_in_base=amount,
+            amount_in_base=amount_in_base,
             description=parsed["description"] or f"Transfer dari {source_wallet.name} ke {target_wallet.name}",
             merchant=receipt_meta.get("merchant") if receipt_meta else None,
             raw_source=source,
@@ -276,13 +373,13 @@ def _process_user_transaction_message(
         db.commit()
         db.refresh(tx)
 
-        formatted_amount = f"Rp {int(amount):,}".replace(",", ".")
-        src_bal_fmt = f"Rp {int(round(source_wallet.balance)):,}".replace(",", ".")
-        dest_bal_fmt = f"Rp {int(round(target_wallet.balance)):,}".replace(",", ".")
+        formatted_amount = format_currency_display_string(amount, source_wallet.currency)
+        src_bal_fmt = format_currency_display_string(source_wallet.balance, source_wallet.currency)
+        dest_bal_fmt = format_currency_display_string(target_wallet.balance, target_wallet.currency)
 
         reply_msg = (
             f"🔄 Transfer Berhasil Dicatat!\n"
-            f"• Nominal: {formatted_amount} ({source_wallet.currency})\n"
+            f"• Nominal: {formatted_amount}\n"
             f"• Dari Dompet: {source_wallet.name} (Sisa Saldo: {src_bal_fmt})\n"
             f"• Ke Dompet: {target_wallet.name} (Sisa Saldo: {dest_bal_fmt})\n"
             f"• Deskripsi: {tx.description}"
@@ -353,6 +450,9 @@ def _process_user_transaction_message(
     elif tx_type in ("INCOME", "TOPUP"):
         target_wallet.balance += amount
 
+    w_curr = (getattr(target_wallet, "currency", None) or parsed["currency"] or "IDR").upper()
+    amount_in_base = convert_to_idr(amount, w_curr, rates)
+
     tx = Transaction(
         user_id=user.id,
         wallet_id=target_wallet.id,
@@ -360,8 +460,8 @@ def _process_user_transaction_message(
         budget_id=matched_budget.id if matched_budget else None,
         type=tx_type,
         amount=amount,
-        currency=parsed["currency"],
-        amount_in_base=amount,
+        currency=w_curr,
+        amount_in_base=amount_in_base,
         description=parsed["description"],
         merchant=receipt_meta.get("merchant") if receipt_meta else None,
         raw_source=source,
@@ -390,19 +490,20 @@ def _process_user_transaction_message(
             "remaining_amount": round(rem_now, 2),
         }
 
-    is_topup_text = any(k in raw_text.lower() for k in ("topup", "top up", "isi saldo", "isi dompet", "isi gopay", "isi ovo", "tambah saldo"))
+    is_topup_text = any(k in raw_text.lower() for k in ("topup", "top up", "isi saldo", "isi dompet", "isi gopay", "isi ovo", "tambah saldo", "beli emas"))
     if is_topup_text:
         action_label = "Top Up / Pemasukan"
         action_symbol = "💰"
     else:
         action_label = "Pengeluaran" if tx_type == "EXPENSE" else "Pemasukan"
         action_symbol = "💸" if tx_type == "EXPENSE" else "💰"
-    formatted_amount = f"Rp {int(amount):,}".replace(",", ".")
-    rem_wallet_fmt = f"Rp {int(round(target_wallet.balance)):,}".replace(",", ".")
+
+    formatted_amount = format_currency_display_string(amount, w_curr)
+    rem_wallet_fmt = format_currency_display_string(target_wallet.balance, target_wallet.currency)
 
     reply_msg = (
         f"{action_symbol} {action_label} Berhasil Dicatat!\n"
-        f"• Nominal: {formatted_amount} ({parsed['currency']})\n"
+        f"• Nominal: {formatted_amount}\n"
         f"• Kategori: {category.name if category else 'Lain-lain'}\n"
         f"{budget_line}"
         f"• Dompet: {target_wallet.name} (Sisa Saldo: {rem_wallet_fmt})\n"
@@ -420,7 +521,7 @@ def _process_user_transaction_message(
 
 
 @router.post("/simulate-chat")
-def simulate_chat_message(
+async def simulate_chat_message(
     req: SimulateChatRequest,
     current_user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
@@ -440,6 +541,30 @@ def simulate_chat_message(
         receipt_meta=req.receipt_data,
         db=db,
     )
+
+
+async def setup_telegram_bot_commands() -> bool:
+    """Registers official slash commands in the Telegram chat menu ([/] button)."""
+    if not settings.TELEGRAM_BOT_TOKEN:
+        return False
+    commands = [
+        {"command": "saldo", "description": "Cek saldo semua dompet (IDR, USD, Emas)"},
+        {"command": "laporan", "description": "Laporan pemasukan & pengeluaran bulanan"},
+        {"command": "portofolio", "description": "Review portofolio investasi vs best practice"},
+        {"command": "finplanner", "description": "Konsultasi AI Financial Planner (Real-Time Web)"},
+        {"command": "selesai", "description": "Keluar dari mode AI ke catat transaksi"},
+        {"command": "help", "description": "Panduan perintah & contoh pencatatan"},
+    ]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.post(
+                f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/setMyCommands",
+                json={"commands": commands},
+            )
+            return res.status_code == 200
+    except Exception as exc:
+        logger.warning("Could not set Telegram bot commands: %s", exc)
+        return False
 
 
 async def _send_telegram_reply(chat_id: str, reply_msg: str) -> Dict[str, Any]:
@@ -505,14 +630,20 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
                     bot_link.platform_username = message.get("from", {}).get("username")
                     bot_link.pairing_code = None
                     db.commit()
+                    # Setup bot menu commands on first pairing
+                    try:
+                        await setup_telegram_bot_commands()
+                    except Exception:
+                        pass
                     return await _send_telegram_reply(
                         chat_id,
                         "✅ Akun Telegram Anda berhasil dihubungkan ke AI-Finance!\n\n"
                         "Anda sekarang bisa langsung mencatat transaksi, misal:\n"
                         "• makan siang 35rb di warteg\n"
-                        "• isi bensin 250rb\n"
-                        "• gaji bulanan 10jt\n\n"
-                        "Ketik /summary atau /laporan untuk cek ringkasan saldo."
+                        "• beli emas 2.5 gram\n"
+                        "• topup 50 usd\n"
+                        "• transfer bca ke bibit 1jt\n\n"
+                        "💡 Ketik /finplanner untuk berdiskusi dengan AI Financial Planner, atau /saldo untuk cek saldo dompet."
                     )
             return await _send_telegram_reply(
                 chat_id,
@@ -544,12 +675,13 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
             source="TELEGRAM",
             receipt_meta=None,
             db=db,
+            bot_link=bot_link,
         )
         return await _send_telegram_reply(chat_id, result["message"])
 
     except Exception as e:
         logger.error("Telegram webhook error: %s", e)
-        err_msg = f"⚠️ Terjadi kesalahan saat memproses transaksi: {str(e)}"
+        err_msg = f"⚠️ Terjadi kesalahan saat memproses pesan: {str(e)}"
         if chat_id:
             await _send_telegram_reply(chat_id, err_msg)
         return {"ok": True, "error": str(e)}
@@ -604,6 +736,7 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
                     source="WHATSAPP",
                     receipt_meta=None,
                     db=db,
+                    bot_link=bot_link,
                 )
                 return {"status": "processed", "reply": res.get("message"), "result": res}
 

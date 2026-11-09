@@ -475,3 +475,52 @@ async def chat_with_planner(
 
     return StreamingResponse(sse_event_generator(), media_type="text/event-stream")
 
+
+async def ask_planner_direct(user: User, message: str, db: Session) -> str:
+    """Synchronous/direct conversational assistant for Telegram and WhatsApp bots."""
+    profile = _ensure_profile(user, db)
+    mem_result = extract_and_update_profile_memory(message, profile)
+    if mem_result["updated"]:
+        db.commit()
+        db.refresh(profile)
+
+    overview = build_planner_overview(user, db)
+    financial_context = overview["context"]
+
+    user_msg = CFPChatMessage(user_id=user.id, role="user", content=message)
+    db.add(user_msg)
+    db.commit()
+
+    history_records = (
+        db.query(CFPChatMessage)
+        .filter(CFPChatMessage.user_id == user.id)
+        .order_by(desc(CFPChatMessage.created_at))
+        .limit(10)
+        .all()
+    )
+    history = [{"role": h.role, "content": h.content} for h in reversed(history_records)]
+    routing = route_planner_skills(message, history)
+
+    reply = await router_service.generate_planner_response(
+        conversation_history=history,
+        financial_context=financial_context,
+        routing=routing,
+    )
+
+    if reply:
+        stored_snapshot = {
+            k: v for k, v in financial_context.items() if not k.endswith("_text")
+        }
+        stored_snapshot["active_skills"] = routing["skill_labels"]
+        assistant_msg = CFPChatMessage(
+            user_id=user.id,
+            role="assistant",
+            content=reply,
+            metrics_snapshot=json.dumps(stored_snapshot),
+        )
+        db.add(assistant_msg)
+        db.commit()
+
+    return reply
+
+

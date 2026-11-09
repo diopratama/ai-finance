@@ -191,6 +191,7 @@ class BotLink(Base):
     platform_username = Column(String(128), nullable=True)
     pairing_code = Column(String(16), nullable=True, index=True)
     pairing_expires_at = Column(DateTime, nullable=True)
+    chat_mode = Column(String(32), default="TRANSACTION", nullable=False)  # "TRANSACTION" | "PLANNER"
     is_active = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=_utc_now, nullable=False)
 
@@ -288,6 +289,7 @@ _SCHEMA_MIGRATIONS = {
     ("users", "is_verified"): text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT FALSE"),
     ("users", "verification_code"): text("ALTER TABLE users ADD COLUMN verification_code VARCHAR(8)"),
     ("users", "verification_expires_at"): text("ALTER TABLE users ADD COLUMN verification_expires_at TIMESTAMP"),
+    ("bot_links", "chat_mode"): text("ALTER TABLE bot_links ADD COLUMN chat_mode VARCHAR(32) DEFAULT 'TRANSACTION' NOT NULL"),
 }
 
 

@@ -224,10 +224,13 @@ export default function BotPairingPage() {
           <div className="flex flex-wrap gap-2">
             {[
               { label: "⛽ Isi Bensin 250rb (Auto-Danamon)", text: "isi bensin 250rb", src: "WHATSAPP" },
+              { label: "🪙 Beli Emas Antam 2.5 gram", text: "beli emas 2.5 gram di antam", src: "TELEGRAM" },
+              { label: "💵 Topup 50 USD", text: "topup 50 usd", src: "TELEGRAM" },
               { label: "🔄 Topup GoPay 100rb dari BCA", text: "topup gopay 100rb dari bca", src: "WHATSAPP" },
               { label: "📈 Transfer 1jt dari Mandiri ke Bibit", text: "transfer 1jt dari mandiri ke bibit", src: "TELEGRAM" },
-              { label: "➕ Tambah Saldo Bibit 500rb", text: "tambah saldo bibit 500rb", src: "TELEGRAM" },
-              { label: "➖ Tarik Dana Jago 200rb", text: "tarik dana jago 200rb", src: "WHATSAPP" },
+              { label: "🤖 /finplanner (Konsultasi AI)", text: "/finplanner", src: "TELEGRAM" },
+              { label: "🌐 Tanya AI Data Live", text: "/finplanner Berapa harga emas antam dan kurs USD hari ini?", src: "TELEGRAM" },
+              { label: "💳 /saldo (Multi-Currency & Emas)", text: "/saldo", src: "TELEGRAM" },
               { label: "📊 /laporan (Ringkasan Bulanan)", text: "/laporan", src: "TELEGRAM" },
               { label: "💼 /portofolio (Review Investasi)", text: "/portofolio", src: "TELEGRAM" },
             ].map((p, idx) => (

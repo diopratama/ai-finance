@@ -6,13 +6,21 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatCurrency(amount: number, currency: string = "IDR"): string {
-  if (currency.toUpperCase() === "USD") {
+  const c = (currency || "IDR").toUpperCase();
+  if (c === "USD") {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     }).format(amount);
+  }
+
+  if (c === "GRAM" || c === "XAU") {
+    return `${Number(amount).toLocaleString("id-ID", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 3,
+    })} gram`;
   }
 
   // Indonesian Rupiah format

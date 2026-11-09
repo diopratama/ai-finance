@@ -3,11 +3,20 @@ from typing import Dict, Any, List, Optional
 
 
 def parse_indonesian_amount(text: str) -> Optional[tuple[float, str]]:
-    """Extracts amount and currency from text, handling formats like 25k, 50rb, 1.5jt, $15, 50.000, 100000."""
+    """Extracts amount and currency from text, handling formats like 25k, 50rb, 1.5jt, $15, 2 gram, 50.000, 100000."""
     clean = text.lower().strip()
 
-    # Match USD: $15 or 15 usd
-    usd_match = re.search(r'\$\s*([0-9]+(?:\.[0-9]+)?)', clean) or re.search(r'([0-9]+(?:\.[0-9]+)?)\s*usd', clean)
+    # Match GRAM Emas: 2 gram, 10 gr, 0.5 gram
+    gram_match = re.search(r'([0-9]+(?:[\.,][0-9]+)?)\s*(?:gram|gr)\b', clean)
+    if gram_match:
+        val_str = gram_match.group(1).replace(',', '.')
+        return float(val_str), "GRAM"
+
+    # Match USD: $15 or 15 usd or 50 dollar / dolar
+    usd_match = (
+        re.search(r'\$\s*([0-9]+(?:\.[0-9]+)?)', clean)
+        or re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:usd|dollar|dolar)\b', clean)
+    )
     if usd_match:
         return float(usd_match.group(1)), "USD"
 

@@ -32,7 +32,7 @@ import {
   removeWalletMember,
   resetAccountData,
 } from "@/lib/api";
-import { Wallet, WalletMember, PortfolioReview } from "@/lib/types";
+import { Wallet, WalletMember, PortfolioReview, MarketRates } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
 const TYPE_PRESETS = [
@@ -41,6 +41,8 @@ const TYPE_PRESETS = [
   "BANK SYARIAH",
   "EWALLET",
   "CASH",
+  "EMAS / LOGAM MULIA",
+  "VALAS / USD",
   "INVESTMENT",
   "RDN",
   "CREDIT",
@@ -61,6 +63,7 @@ export default function WalletsPage() {
   const [personalBalance, setPersonalBalance] = useState<number>(0);
   const [sharedBalance, setSharedBalance] = useState<number>(0);
   const [portfolioReview, setPortfolioReview] = useState<PortfolioReview | null>(null);
+  const [marketRates, setMarketRates] = useState<MarketRates | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [filterTab, setFilterTab] = useState<"ALL" | "PERSONAL" | "SHARED" | "INVESTMENT">("ALL");
 
@@ -112,6 +115,9 @@ export default function WalletsPage() {
       if (res.portfolio_review) {
         setPortfolioReview(res.portfolio_review);
       }
+      if (res.market_rates) {
+        setMarketRates(res.market_rates);
+      }
 
       const editorWallets = res.wallets.filter((w) => w.access_role !== "VIEWER");
       if (editorWallets.length >= 2) {
@@ -128,6 +134,22 @@ export default function WalletsPage() {
   useEffect(() => {
     refreshWallets();
   }, []);
+
+  const handleSelectPreset = (p: string) => {
+    setType(p);
+    if (p === "EMAS / LOGAM MULIA") {
+      setType("INVESTMENT");
+      setAssetClass("GOLD");
+      setCurrency("GRAM");
+      setColor("#f0b000");
+      if (!name) setName("Tabungan Emas Antam");
+    } else if (p === "VALAS / USD") {
+      setType("BANK");
+      setCurrency("USD");
+      setColor("#10b981");
+      if (!name) setName("Rekening USD");
+    }
+  };
 
   const handleOpenAdd = () => {
     setEditingWallet(null);
@@ -147,6 +169,7 @@ export default function WalletsPage() {
     setType(w.type);
     setAssetClass(w.asset_class || "");
     setBalance(w.balance.toString());
+    setCurrency(w.currency || "IDR");
     setColor(w.color || "#f0b000");
     setIsDefault(w.is_default);
     setShowAddModal(true);
@@ -162,6 +185,7 @@ export default function WalletsPage() {
         type: type.trim().toUpperCase(),
         asset_class: assetClass || null,
         balance: parseFloat(balance) || 0,
+        currency,
         color,
         is_default: isDefault,
       });
@@ -353,6 +377,27 @@ export default function WalletsPage() {
             <span>+ Tambah Dompet</span>
           </button>
         </div>
+      </div>
+
+      {/* Live Market Rates Ticker */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-secondary/70 border border-border text-xs">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <span className="font-semibold text-foreground flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4 text-[#8a6300] dark:text-[#f0b000]" />
+            <span>Kurs &amp; Emas Terkini:</span>
+          </span>
+          <span className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
+            <span>🪙 Emas Antam/Spot:</span>
+            <span>{formatCurrency(marketRates?.gold_idr_per_gram || 1540000)}/gr</span>
+          </span>
+          <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+            <span>💵 USD/IDR:</span>
+            <span>{formatCurrency(marketRates?.usd_idr || 16250)}</span>
+          </span>
+        </div>
+        <span className="text-[11px] text-muted-foreground">
+          Konversi live otomatis ke total saldo Rupiah &bull; Update berkala
+        </span>
       </div>
 
       {/* Balance Summary Cards */}
@@ -720,8 +765,13 @@ export default function WalletsPage() {
                 {/* Balance & Budget Commitment */}
                 <div className="mt-4 space-y-1">
                   <span className="text-xs text-muted-foreground">Saldo Aktual</span>
-                  <div className="text-2xl font-extrabold text-foreground tracking-tight">
-                    {formatCurrency(w.balance, w.currency)}
+                  <div className="text-2xl font-extrabold text-foreground tracking-tight flex items-baseline gap-2 flex-wrap">
+                    <span>{formatCurrency(w.balance, w.currency)}</span>
+                    {w.currency && w.currency !== "IDR" && (
+                      <span className="text-xs font-semibold text-muted-foreground bg-secondary px-2 py-0.5 rounded-full border border-border">
+                        ≈ {formatCurrency(w.balance_in_base || w.balance)}
+                      </span>
+                    )}
                   </div>
 
                   {hasCommitment && (
@@ -808,14 +858,14 @@ export default function WalletsPage() {
                     <button
                       key={p}
                       type="button"
-                      onClick={() => setType(p)}
+                      onClick={() => handleSelectPreset(p)}
                       className={`px-2 py-0.5 rounded-lg border text-[10px] font-semibold transition-colors ${
-                        type.toUpperCase() === p
+                        type.toUpperCase() === p || (p === "EMAS / LOGAM MULIA" && currency === "GRAM") || (p === "VALAS / USD" && currency === "USD")
                           ? "bg-accent border-[#f0b000]/50 text-[#8a6300] dark:text-[#f0b000]"
                           : "bg-secondary border-border text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      {p}
+                      {p === "EMAS / LOGAM MULIA" ? "🪙 EMAS / LOGAM MULIA" : p === "VALAS / USD" ? "💵 VALAS / USD" : p}
                     </button>
                   ))}
                 </div>
@@ -844,24 +894,51 @@ export default function WalletsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold text-foreground block mb-1">Saldo</label>
+                  <label className="font-semibold text-foreground block mb-1">
+                    {currency === "GRAM"
+                      ? "Jumlah Emas (Gram)"
+                      : currency === "USD"
+                      ? "Saldo Valas ($ USD)"
+                      : "Saldo (Rp)"}
+                  </label>
                   <input
                     type="number"
-                    placeholder="0"
+                    step="any"
+                    placeholder={currency === "GRAM" ? "Contoh: 10.5" : currency === "USD" ? "Contoh: 50" : "0"}
                     value={balance}
                     onChange={(e) => setBalance(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-foreground font-mono"
+                    className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-foreground font-mono font-bold"
                   />
+                  {currency === "GRAM" && (
+                    <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 font-semibold space-y-0.5">
+                      <div>🪙 Kurs Emas Live: ~{formatCurrency(marketRates?.gold_idr_per_gram || 1540000)}/gram</div>
+                      <div>≈ Setara: {formatCurrency((parseFloat(balance) || 0) * (marketRates?.gold_idr_per_gram || 1540000))}</div>
+                    </div>
+                  )}
+                  {currency === "USD" && (
+                    <div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 font-semibold space-y-0.5">
+                      <div>💵 Kurs USD Live: ~{formatCurrency(marketRates?.usd_idr || 16250)}/$</div>
+                      <div>≈ Setara: {formatCurrency((parseFloat(balance) || 0) * (marketRates?.usd_idr || 16250))}</div>
+                    </div>
+                  )}
                 </div>
                 <div>
-                  <label className="font-semibold text-foreground block mb-1">Mata Uang</label>
+                  <label className="font-semibold text-foreground block mb-1">Mata Uang / Satuan</label>
                   <select
                     value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-foreground"
+                    onChange={(e) => {
+                      const newCurr = e.target.value;
+                      setCurrency(newCurr);
+                      if (newCurr === "GRAM") {
+                        if (!assetClass) setAssetClass("GOLD");
+                        if (type === "BANK") setType("INVESTMENT");
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-foreground font-semibold"
                   >
-                    <option value="IDR">IDR (Rp)</option>
-                    <option value="USD">USD ($)</option>
+                    <option value="IDR">IDR (Rupiah - Rp)</option>
+                    <option value="USD">USD (Dollar AS - $)</option>
+                    <option value="GRAM">GRAM (Emas / Logam Mulia - gr)</option>
                   </select>
                 </div>
               </div>

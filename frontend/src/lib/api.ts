@@ -287,6 +287,7 @@ export async function getWallets(month?: string): Promise<{
   month_key?: string;
   wallets: Wallet[];
   portfolio_review?: PortfolioReview;
+  market_rates?: import("./types").MarketRates;
 }> {
   try {
     const q = month ? `?month=${encodeURIComponent(month)}` : "";
@@ -325,6 +326,7 @@ export async function updateWallet(
     type: string;
     asset_class: string | null;
     balance: number;
+    currency: string;
     color: string;
     is_default: boolean;
     is_archived: boolean;

@@ -17,6 +17,7 @@ from app.db import (
     get_wallet_role,
 )
 from app.auth import get_current_user
+from app.services.market_rates_service import convert_to_idr, normalize_currency_unit
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
@@ -215,6 +216,8 @@ def create_transaction(
         wallet.balance += req.amount
 
     resolved_category_id = req.category_id or (linked_budget.category_id if linked_budget else None)
+    tx_currency = normalize_currency_unit(req.currency if req.currency and req.currency != "IDR" else (wallet.currency if wallet else "IDR"))
+    amt_in_base = convert_to_idr(req.amount, tx_currency)
 
     tx = Transaction(
         user_id=current_user.id,
@@ -223,8 +226,8 @@ def create_transaction(
         budget_id=linked_budget.id if linked_budget else None,
         type=tx_type,
         amount=req.amount,
-        currency=req.currency.upper(),
-        amount_in_base=req.amount,
+        currency=tx_currency,
+        amount_in_base=amt_in_base,
         description=req.description,
         merchant=req.merchant,
         raw_source=req.raw_source,

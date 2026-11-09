@@ -14,6 +14,9 @@ export interface Wallet {
   asset_class_label?: string | null;
   is_investment?: boolean;
   balance: number;
+  balance_in_base?: number;
+  formatted_native?: string;
+  formatted_base?: string;
   currency: string;
   color: string;
   is_default: boolean;
@@ -29,6 +32,27 @@ export interface Wallet {
   shortfall_amount?: number;
   funding_status?: "FUNDED" | "SHORTFALL" | "IDLE";
   assigned_items_count?: number;
+}
+
+export interface MarketRates {
+  usd_idr: number;
+  usd_to_idr?: number;
+  gold_idr_per_gram: number;
+  gold_per_gram_idr?: number;
+  updated_at: string;
+  source: string;
+}
+
+export interface WalletsResponse {
+  total_balance: number;
+  personal_balance?: number;
+  shared_balance?: number;
+  investment_balance?: number;
+  currency: string;
+  month_key?: string;
+  wallets: Wallet[];
+  portfolio_review?: PortfolioReview | null;
+  market_rates?: MarketRates;
 }
 
 export interface PortfolioAllocationComparison {

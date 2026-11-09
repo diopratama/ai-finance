@@ -328,6 +328,7 @@ def route_planner_skills(message: str, history: Optional[List[Dict[str, str]]] =
 def build_planner_system_prompt(
     financial_context: Dict[str, Any],
     routing: Dict[str, Any],
+    web_search_context: Optional[str] = None,
 ) -> str:
     """Assembles the modular system prompt from PERSONA_AND_TONE + RUNTIME_CONTRACT + routed SKILL.md files + verified snapshot."""
     persona_doc = _read_skill_doc("PERSONA_AND_TONE.md")
@@ -374,6 +375,10 @@ def build_planner_system_prompt(
 - Kelengkapan Profil Personalisasi: {financial_context.get('profile_completeness_pct', 0)}% (Belum dikonfirmasi: {missing_text})
 [/VERIFIED USER FINANCIAL SNAPSHOT]"""
 
+    web_section = ""
+    if web_search_context and web_search_context.strip():
+        web_section = f"\n\n---\n\n{web_search_context.strip()}\n\n"
+
     return f"""{persona_doc}
 
 ---
@@ -393,7 +398,7 @@ def build_planner_system_prompt(
 
 ---
 
-{snapshot_block}
+{snapshot_block}{web_section}
 """
 
 

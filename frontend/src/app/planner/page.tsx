@@ -235,6 +235,10 @@ export default function FinancialPlannerPage() {
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-accent text-[#8a6300] dark:text-[#f0b000] border border-[#f0b000]/30">
                   Adaptive Mentor
                 </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
+                  <span>Real-Time Web Search</span>
+                </span>
                 {shariaActive && (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500/15 text-teal-700 dark:text-teal-300 border border-teal-500/30">
                     Mode Syariah Aktif
@@ -346,6 +350,8 @@ export default function FinancialPlannerPage() {
         <div className="px-4 py-2 border-t border-border bg-secondary/30 flex items-center gap-2 overflow-x-auto text-xs">
           <span className="text-[11px] text-muted-foreground shrink-0 font-medium">Topik Cepat:</span>
           {[
+            "Berapa harga emas antam dan kurs dollar hari ini?",
+            "Bagaimana prospek ORI / SBN ritel terbaru?",
             "Bedah kesehatan finansial 360°",
             "Simulasi aman ambil KPR rumah",
             "Jelaskan target Coast FIRE punyaku",
