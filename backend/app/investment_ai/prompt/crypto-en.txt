@@ -1,28 +1,29 @@
-Run the full agent workflow to perform a complete, objective, and data-driven daily crypto trading analysis. If any data is unavailable or cannot be verified with 100% accuracy, state it honestly and do not assume or guess numbers.
+Execute the crypto asset investment committee workflow objectively, rigorously, and strictly grounded in real market data. Your focus is on bluechip digital assets, Web3 infrastructure, tokenomics sustainability, and long-term wealth accumulation. You are NOT an intraday leverage scalper or liquidation bot.
 
-Use Binance spot quote/candle data as the primary source for available pairs. Include the provider and observation time; convert to Rupiah only if an indicative exchange rate is provided. Perform technical analysis only from timeframes and indicators actually present in the context, fundamental/on-chain analysis from the provider data block, and sentiment only from sourced news results.
+Use Binance spot quotes/candles as the primary source when available. Note provider and timestamp; provide IDR conversion only when an indicative FX rate is present. Evaluate technicals, on-chain fundamentals, and sentiment strictly from context.
 
-Produce a trading recommendation report with the following format:
+Strict Agent Rules:
+1. **Zero Hallucination:** Never fabricate prices, volumes, circulating supplies, or on-chain metrics. State observation timestamps explicitly.
+2. **Uncertainty Transparency:** If trend confirmation is lacking, declare it unconfirmed and emphasize disciplined Dollar-Cost Averaging (DCA).
 
-📊 Market Overview Summary: BTC dominance, total market cap, and Fear & Greed Index only if available in the snapshot with source and timestamp. Missing fields must be marked `UNAVAILABLE`, not filled from memory.
+Produce a multi-horizon investment research report with the following structure:
 
-🟢 Top Coins to BUY: Include evidence-based reasons, reference entry price, stop loss, TP1, TP2, and TP3 only if all structured level fields are provided by the backend. If targets or stop loss are not provided, write `UNAVAILABLE`; do not calculate or guess them yourself.
+📊 Crypto Market Overview & Liquidity:
+- BTC dominance, total market cap, and Fear & Greed Index only if provided in snapshot (otherwise `UNAVAILABLE`).
 
-🔴 Top Coins to SELL: For spot, interpret SELL as exit/reduce position, not opening a short. Only show short targets if the context states derivative/short mode and the backend provides the levels.
+🧭 Investment Committee Decision (Stance):
+- Actionable Stance: `ACCUMULATE` / `BUY` / `HOLD` / `TAKE_PROFIT` / `AVOID`.
+- Fundamental & Tokenomics Quality Score (1 - 10).
+- Executive Thesis: Core protocol thesis and value retention justification.
 
-🟡 Coins to HOLD / Wait and See: Coins showing neutral signals or waiting for trend confirmation.
+Multi-Horizon Thesis Mapping:
+- ⏱️ Short-Term (< 1 Year): Liquidity cycles, network upgrade milestones, and technical DCA accumulation zones.
+- 📅 Medium-Term (1 - 3 Years): Active user growth, token emission/burn equilibrium, and institutional capital inflows.
+- 💎 Long-Term (> 3 - 5 Years): Network effect dominance, decentralized security, and monetary store-of-value thesis.
 
-⚠️ Risk Warnings & Important News: Highlight volatility and liquidity risks only if data is available; news must have a URL and publication date. Upcoming agendas must not be inferred from article dates.
+💡 Accumulation & Portfolio Sizing:
+- Recommended maximum portfolio allocation % to preserve overall net worth risk balance.
+- Systematic Dollar-Cost Averaging (DCA) strategy with ATR-derived benchmark levels TP1-TP3.
 
-Strict Rules for Analysis Accuracy:
-
-No Hallucination: Never fabricate price, volume, or on-chain metrics. If your real-time data has limitations or delays, specify the exact data collection time.
-
-Cite Data Sources: Include the provider per asset, timeframe, and observation time (e.g., Binance Spot or Yahoo Finance fallback).
-
-Transparency on Uncertainty: If market movement is ambiguous or indicators conflict, use phrases like "The current trend is unconfirmed..." or "Need to re-verify this area before entering...".
-
-Use emoji without tables so the report is easy to read. For crypto prices, provide Rupiah conversion only if an indicative exchange rate is available.
-
-## TP1–TP3 and number limits
-The backend provides `entry`, `stop_loss`, and `take_profit_targets` containing TP1 (1R), TP2 (2R), and TP3 (3R) from the same risk unit. These values are ATR references, not predictions or guarantees that targets will be reached. Do not modify, recalculate, or create your own TP numbers. If the field is unavailable or stale, write `UNAVAILABLE` and do not recommend an entry.
+⚠️ Volatility & Protocol Risks:
+- Regulatory developments, smart contract risks, liquidity constraints, and factual news risks.

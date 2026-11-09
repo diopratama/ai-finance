@@ -131,32 +131,34 @@ def test_chat_deep_validation_mode():
         },
     }
 
-    # Standard chat
-    std_res = chat_with_investment_agent(
-        history=[{"role": "user", "content": "Apakah valuasi saat ini aman?"}],
-        analysis_context=ctx,
-        user_message="Apakah valuasi saat ini aman?",
-        mode="standard",
-    )
-    assert "reply" in std_res
-    assert std_res["mode"] == "standard"
-    assert std_res["validation_meta"] is None
+    # Standard chat (graceful fallback or mocked reply)
+    with patch("app.investment_ai.orchestrator.call_llm", return_value="Valuasi saat ini tergolong wajar (Fair Value)."):
+        std_res = chat_with_investment_agent(
+            history=[{"role": "user", "content": "Apakah valuasi saat ini aman?"}],
+            analysis_context=ctx,
+            user_message="Apakah valuasi saat ini aman?",
+            mode="standard",
+        )
+        assert "reply" in std_res
+        assert "Fair Value" in std_res["reply"]
+        assert std_res["mode"] == "standard"
+        assert std_res["validation_meta"] is None
 
-    # Deep validation audit mode (triggers live re-fetch and discrepancy flags)
-    deep_res = chat_with_investment_agent(
-        history=[{"role": "user", "content": "Audit divergensi 1D vs 1H"}],
-        analysis_context=ctx,
-        user_message="Audit divergensi 1D vs 1H",
-        mode="deep_validation",
-    )
-    assert "reply" in deep_res
-    assert deep_res["mode"] == "deep_validation"
-    meta = deep_res["validation_meta"]
-    assert meta is not None
-    assert "TLKM" in meta["validated_symbols"]
-    assert "live_snapshots" in meta
-    assert len(meta["live_snapshots"]) > 0
-    snap = meta["live_snapshots"][0]
-    assert snap.get("symbol") == "TLKM"
-    assert "rsi_1d" in snap
-    assert "rsi_1h" in snap
+        # Deep validation audit mode (triggers live re-fetch, discrepancy flags, and auditor verdict)
+        deep_res = chat_with_investment_agent(
+            history=[{"role": "user", "content": "Audit divergensi 1D vs 1H"}],
+            analysis_context=ctx,
+            user_message="Audit divergensi 1D vs 1H",
+            mode="deep_validation",
+        )
+        assert "reply" in deep_res
+        assert deep_res["mode"] == "deep_validation"
+        meta = deep_res["validation_meta"]
+        assert meta is not None
+        assert "TLKM" in meta["validated_symbols"]
+        assert "live_snapshots" in meta
+        assert len(meta["live_snapshots"]) > 0
+        snap = meta["live_snapshots"][0]
+        assert snap.get("symbol") == "TLKM"
+        assert "rsi_1d" in snap
+        assert "rsi_1h" in snap

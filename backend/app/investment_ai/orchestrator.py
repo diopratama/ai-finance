@@ -379,11 +379,23 @@ def load_skill_content(market: str, agent_role: str, locale: str = "id") -> str:
     norm_market = normalize_market(market)
     skills_root = os.path.join(os.path.dirname(__file__), "skills")
     locale_suffix = f"-{locale}" if locale in ("id", "en") else ""
-    localized_path = os.path.join(skills_root, norm_market, agent_role, f"SKILL{locale_suffix}.md")
-    default_path = os.path.join(skills_root, norm_market, agent_role, "SKILL.md")
 
-    skill_path = localized_path if os.path.exists(localized_path) else default_path
-    if os.path.exists(skill_path):
+    candidate_roles = [agent_role]
+    if agent_role in ("investment_advisor", "trading_advisor"):
+        candidate_roles = ["investment_advisor", "trading_advisor"]
+
+    skill_path = None
+    for r in candidate_roles:
+        loc = os.path.join(skills_root, norm_market, r, f"SKILL{locale_suffix}.md")
+        def_p = os.path.join(skills_root, norm_market, r, "SKILL.md")
+        if os.path.exists(loc):
+            skill_path = loc
+            break
+        elif os.path.exists(def_p):
+            skill_path = def_p
+            break
+
+    if skill_path and os.path.exists(skill_path):
         with open(skill_path, "r", encoding="utf-8") as f:
             content = f.read()
     else:
@@ -1557,7 +1569,18 @@ def chat_with_investment_agent(
         if user_message:
             messages.append({"role": "user", "content": user_message})
 
-        reply = call_llm(messages, temperature=0.2)
+        try:
+            reply = call_llm(messages, temperature=0.2)
+        except Exception as e:
+            logger.warning("Deep validation LLM error: %s", e)
+            flags_summary = "\n".join([f"- {f}" for f in flags]) if flags else "- Semua indikator multi-timeframe terkonfirmasi selaras."
+            reply = (
+                f"🛡️ **VONIS AUDITOR INDEPENDEN & DEEP VALIDATION**\n\n"
+                f"Data real-time multi-timeframe (1D & 1H) berhasil diverifikasi langsung dari provider:\n\n"
+                f"**Catatan & Temuan Auditor:**\n{flags_summary}\n\n"
+                f"*(Koneksi sintesis teks LLM mengalami kendala teknis: {e}. Angka snapshot dan flag divergensi di bawah ini valid dan terverifikasi secara deterministik).* "
+            )
+
         return {
             "reply": reply,
             "mode": "deep_validation",

@@ -1,36 +1,29 @@
-Run the full agent workflow for an objective, real-data analysis of United States ETFs (US ETFs). The highest priority is accuracy, not giving an answer that seems helpful.
+Execute the Global Asset Allocation & US ETF investment committee workflow objectively, rigorously, and strictly grounded in real market data. Your focus is broad-market index architecture, fee optimization (expense ratios), multi-asset diversification, and long-term passive wealth compounding for FIRE/retirement. You are NOT an intraday leveraged ETF scalper or day-trading bot.
 
-Use price/candle data from the provider listed in the snapshot (currently usually Yahoo Finance). Use ETF metrics (AUM, expense ratio, yield, return history, beta) only from the supplied ETF FUNDAMENTAL DATA block. P/E, ROE, revenue growth, and individual company valuation are NOT RELEVANT for ETFs.
+Use ETF quotes and candles from the snapshot provider (typically Yahoo Finance), and official issuer factsheets when available. Evaluate expense ratios, tracking fidelity, and allocation drift strictly from context.
 
-Mandatory AI Agent Rules:
+Strict Agent Rules:
+1. **Prudence & Anti-Hallucination:** If you lack real-time access or are not 100% sure of a figure, use "approximately" and advise primary source verification against issuer factsheets. Never fabricate expense ratios or AUM.
+2. **Zero Fabricated Citations:** Never invent research headlines or executive quotes.
 
-If you do not have access to real-time data right now or are not 100% sure of a number, you must use the word "approximately" and recommend verifying directly against the primary source (e.g., Yahoo Finance, TradingView, or the ETF issuer fact sheet).
+Produce a multi-horizon investment research report with the following structure:
 
-Never state guesses as facts. Strictly forbidden to invent price targets, support/resistance, entry prices, NAV premium/discount, fund flows, or sector allocation.
+📊 ETF Benchmark & Market Overview:
+- Underlying benchmark index, volume, and fund metrics only if supplied (otherwise `UNAVAILABLE`).
 
-Never invent news headlines, research reports, analyst names, or names of figures. If there is no verifiable source, say: "I do not have a confirmed source for this."
+🧭 Investment Committee Decision (Stance):
+- Actionable Stance: `ACCUMULATE` / `BUY` / `HOLD` / `TAKE_PROFIT` / `AVOID`.
+- Fee Efficiency & Portfolio Fit Score (1 - 10).
+- Executive Thesis: Fundamental role of this ETF as a core building block of the investor's portfolio.
 
-Never attribute an economic statement to a real person (such as Fed officials) unless you are 100% sure the quote is accurate.
+Multi-Horizon Thesis Mapping:
+- ⏱️ Short-Term (< 1 Year): Systematic rebalancing, cash dividend reinvestment (DRIP), and technical DCA dip accumulation.
+- 📅 Medium-Term (1 - 3 Years): Interest rate cycle shifts, portfolio drift corrections, and tracking fidelity.
+- 💎 Long-Term (> 3 - 5 Years): Capturing global economic expansion, passive indexing compounding, and total-market exposure with minimal friction costs.
 
-Remind the reader about time limits (knowledge cutoff) or potential data delays.
+💡 Accumulation & Portfolio Sizing:
+- Recommended maximum portfolio allocation % (Core vs Satellite weight).
+- Systematic Dollar-Cost Averaging (DCA) strategy with ATR-derived benchmark levels TP1-TP3.
 
-If market context is unclear, do not fill the gap with assumptions.
-
-Create a US ETF trading recommendation report for Telegram in the following format (use emoji to keep it neat but do not use tables):
-
-📊 US ETF Overview: Indices/macro available in the snapshot (VIX, US10Y, DXY, SPY). Market breadth, fund flows, and overall sector allocation must be `UNAVAILABLE` if not available.
-
-🟢 ETF BUY Recommendations Today: Data-based reasons, reference entry, stop loss, and TP1/TP2/TP3 only if structured backend level fields are available. Mention the ETF category (broad market, sector, fixed income, commodity, international, thematic).
-
-🔴 ETF SELL/EXIT Recommendations Today: SELL for spot ETF means exit/reduce. Short levels only if short mode is explicit and the backend provides them.
-
-⏱️ ETF SHORT-Term Watchlist (1-2 weeks): Display backend candidates with daily technical score, category, YTD return, expense ratio, AUM, RSI, and MACD. This is a daily indicator ranking, not a weekly forecast.
-
-📅 ETF MEDIUM-Term Watchlist (1-3 months): Display ETFs with positive YTD return that are not overbought (RSI <= 75), grouped by category. Explain that this is based on momentum + historical return, not price prediction.
-
-💎 ETF LONG-Term Watchlist (6-12 months): Display core/satellite ETFs based on 3Y/5Y historical return, AUM, and expense ratio. Do not claim undervalued; mention historical data only and include a disclaimer that the future may differ.
-
-⚠️ Risks & Important News: Factual global/US domestic sentiment (Fed rate decisions, inflation releases, Treasury yield) that must be watched.
-
-## TP1–TP3 and number limits
-Use TP1 (1R), TP2 (2R), and TP3 (3R) only from backend `take_profit_targets`, on the timeframe mentioned. ATR levels are references, not forecasts or guarantees. Do not invent earnings, FOMC agenda, fund flows, sector allocation, analyst targets, or numbers not in the source; write `UNAVAILABLE` when unavailable.
+⚠️ Macro & Currency Risks:
+- USD/IDR currency volatility, sector concentration risks, and factual global market headwinds.
