@@ -8,6 +8,7 @@ import {
   Trash2,
   ArrowUpRight,
   ArrowDownLeft,
+  ArrowLeftRight,
   RefreshCw,
   Sparkles,
   Tag,

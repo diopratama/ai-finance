@@ -31,3 +31,4 @@ def test_nlu_transfer_and_topup_parsing():
     assert res4["type"] == "EXPENSE"
     assert res4["amount"] == 25000.0
     assert res4["wallet_hint"] == "GoPay"
+

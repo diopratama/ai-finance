@@ -283,12 +283,6 @@ def _process_user_transaction_message(
         "matched_budget": matched_budget_payload,
         "wallet": {"id": target_wallet.id, "name": target_wallet.name, "balance": target_wallet.balance},
     }
-        "message": reply_msg,
-        "transaction_id": tx.id,
-        "parsed": parsed,
-        "matched_budget": matched_budget_payload,
-        "wallet": {"id": target_wallet.id, "name": target_wallet.name, "balance": target_wallet.balance},
-    }
 
 
 @router.post("/simulate-chat")

@@ -104,8 +104,12 @@ def get_admin_users(
     """Returns paginated list of registered users with wealth, activity, and verification status."""
     query = db.query(User)
 
-    if search:
-        search_pattern = f"%{search.strip().lower()}%"
+    search_str = search if isinstance(search, str) else None
+    page_num = page if isinstance(page, int) else int(getattr(page, "default", 1) or 1)
+    limit_num = limit if isinstance(limit, int) else int(getattr(limit, "default", 20) or 20)
+
+    if search_str:
+        search_pattern = f"%{search_str.strip().lower()}%"
         query = query.filter(
             or_(
                 func.lower(User.full_name).ilike(search_pattern),
@@ -116,8 +120,8 @@ def get_admin_users(
     total = query.count()
     users = (
         query.order_by(User.created_at.desc())
-        .offset((page - 1) * limit)
-        .limit(limit)
+        .offset((page_num - 1) * limit_num)
+        .limit(limit_num)
         .all()
     )
 

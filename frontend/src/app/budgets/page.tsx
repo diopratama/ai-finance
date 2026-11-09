@@ -7,6 +7,7 @@ import {
   Target,
   Layers,
   ArrowRightLeft,
+  ArrowLeftRight,
   Copy,
   ChevronLeft,
   ChevronRight,
@@ -898,7 +899,7 @@ export default function BudgetsAllocationPage() {
                                       ).toString()
                                     );
                                     setActionSourceWalletId(
-                                      allocationData?.payroll_wallet_id ||
+                                      allocation?.payroll_wallet_id ||
                                         wallets.find((w) => w.is_default)?.id ||
                                         wallets[0]?.id ||
                                         ""
@@ -1886,7 +1887,7 @@ export default function BudgetsAllocationPage() {
                     <select
                       value={
                         actionSourceWalletId ||
-                        allocationData?.payroll_wallet_id ||
+                        allocation?.payroll_wallet_id ||
                         wallets.find((w) => w.is_default)?.id ||
                         wallets[0]?.id ||
                         ""
