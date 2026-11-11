@@ -27,6 +27,17 @@ export function formatCurrency(amount: number, currency: string = "IDR"): string
   return `Rp ${Math.round(amount).toLocaleString("id-ID")}`;
 }
 
+export function formatMaskedCurrency(currency: string = "IDR"): string {
+  const c = (currency || "IDR").toUpperCase();
+  if (c === "USD") {
+    return "$ ••••••";
+  }
+  if (c === "GRAM" || c === "XAU") {
+    return "•••••• gram";
+  }
+  return "Rp ••••••";
+}
+
 export function formatDate(dateStr: string): string {
   try {
     const d = new Date(dateStr);

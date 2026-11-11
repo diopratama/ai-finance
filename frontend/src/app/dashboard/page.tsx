@@ -19,6 +19,8 @@ import {
   Calendar,
   CheckCircle2,
   AlertTriangle,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import {
   getWallets,
@@ -37,7 +39,8 @@ import {
   MonthlyAllocationResponse,
   PortfolioReview,
 } from "@/lib/types";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, formatMaskedCurrency } from "@/lib/utils";
+import { useBalanceVisibility } from "@/lib/useBalanceVisibility";
 
 function shiftMonthKey(mk: string, delta: number): string {
   const parts = mk.split("-");
@@ -63,6 +66,7 @@ export default function DashboardOverviewPage() {
   const [fireMetrics, setFireMetrics] = useState<FIREMetrics | null>(null);
   const [healthContext, setHealthContext] = useState<PlannerHealthContext | null>(null);
   const [allocation, setAllocation] = useState<MonthlyAllocationResponse | null>(null);
+  const { hideAll, isWalletHidden, toggleHideAll, toggleWalletVisibility } = useBalanceVisibility();
 
   useEffect(() => {
     async function loadData() {
@@ -134,6 +138,21 @@ export default function DashboardOverviewPage() {
             </button>
           </div>
 
+          <button
+            type="button"
+            onClick={toggleHideAll}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-colors ${
+              hideAll
+                ? "bg-accent border-[#f0b000]/40 text-[#8a6300] dark:text-[#f0b000]"
+                : "bg-card border-border hover:bg-accent text-foreground"
+            }`}
+            title={hideAll ? "Tampilkan semua saldo dompet" : "Sembunyikan semua saldo dompet"}
+            aria-pressed={hideAll}
+          >
+            {hideAll ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+            <span>{hideAll ? "Tampilkan Saldo" : "Sembunyikan Saldo"}</span>
+          </button>
+
           <Link
             href="/budgets"
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-card border border-border hover:bg-accent text-foreground transition-colors"
@@ -169,7 +188,7 @@ export default function DashboardOverviewPage() {
             </div>
           </div>
           <div className="text-2xl font-bold text-foreground mt-3">
-            {formatCurrency(totalBalance, "IDR")}
+            {hideAll ? formatMaskedCurrency("IDR") : formatCurrency(totalBalance, "IDR")}
           </div>
           <div className="text-[11px] text-muted-foreground mt-2 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-[#f0b000]" />
@@ -451,7 +470,7 @@ export default function DashboardOverviewPage() {
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Total Aset Investasi:{" "}
                   <strong className="text-foreground">
-                    {formatCurrency(portfolioReview.total_investment_balance, "IDR")}
+                    {hideAll ? formatMaskedCurrency("IDR") : formatCurrency(portfolioReview.total_investment_balance, "IDR")}
                   </strong>{" "}
                   ({portfolioReview.invested_ratio_pct}% dari kekayaan bersih • Target Return{" "}
                   {portfolioReview.expected_cagr})
@@ -516,7 +535,10 @@ export default function DashboardOverviewPage() {
             <div className="mt-6 space-y-2">
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">
-                  Terkumpul: <strong className="text-foreground">{formatCurrency(totalBalance, "IDR")}</strong>
+                  Terkumpul:{" "}
+                  <strong className="text-foreground">
+                    {hideAll ? formatMaskedCurrency("IDR") : formatCurrency(totalBalance, "IDR")}
+                  </strong>
                 </span>
                 <span className="text-[#8a6300] dark:text-[#f0b000] font-bold">
                   {fireMetrics?.progress_percentage || 0.7}% dari target
@@ -611,33 +633,52 @@ export default function DashboardOverviewPage() {
             </Link>
           </div>
           <div className="space-y-3">
-            {wallets.map((w) => (
-              <div
-                key={w.id}
-                className="p-3.5 rounded-xl bg-secondary/70 border border-border flex items-center justify-between"
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-3.5 h-3.5 rounded-full shrink-0"
-                    style={{ backgroundColor: w.color }}
-                  />
-                  <div>
-                    <div className="text-sm font-semibold text-foreground">{w.name}</div>
-                    <div className="text-[11px] text-muted-foreground">{w.type}</div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-bold text-foreground">
-                    {formatCurrency(w.balance, w.currency)}
-                  </div>
-                  {(w.assigned_items_count || 0) > 0 && (
-                    <div className="text-[10px] text-[#8a6300] dark:text-[#f0b000] font-medium">
-                      {w.assigned_items_count} pos anggaran
+            {wallets.map((w) => {
+              const walletHidden = isWalletHidden(w.id);
+              return (
+                <div
+                  key={w.id}
+                  className="p-3.5 rounded-xl bg-secondary/70 border border-border flex items-center justify-between gap-2"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className="w-3.5 h-3.5 rounded-full shrink-0"
+                      style={{ backgroundColor: w.color }}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-foreground truncate">{w.name}</div>
+                      <div className="text-[11px] text-muted-foreground">{w.type}</div>
                     </div>
-                  )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-right">
+                      <div className="text-sm font-bold text-foreground">
+                        {walletHidden ? formatMaskedCurrency(w.currency) : formatCurrency(w.balance, w.currency)}
+                      </div>
+                      {(w.assigned_items_count || 0) > 0 && (
+                        <div className="text-[10px] text-[#8a6300] dark:text-[#f0b000] font-medium">
+                          {w.assigned_items_count} pos anggaran
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleWalletVisibility(w.id)}
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        walletHidden
+                          ? "text-[#8a6300] dark:text-[#f0b000] bg-accent/60 hover:bg-accent"
+                          : "text-muted-foreground hover:text-foreground hover:bg-card"
+                      }`}
+                      title={walletHidden ? "Tampilkan saldo dompet ini" : "Sembunyikan saldo dompet ini"}
+                      aria-label={walletHidden ? `Tampilkan saldo ${w.name}` : `Sembunyikan saldo ${w.name}`}
+                      aria-pressed={walletHidden}
+                    >
+                      {walletHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

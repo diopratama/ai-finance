@@ -10,9 +10,14 @@ import {
   Check,
   RefreshCw,
   Sparkles,
+  ExternalLink,
+  Wrench,
 } from "lucide-react";
 import { generatePairingCode, getBotStatus, simulateChatMessage } from "@/lib/api";
 import { BotStatusMap } from "@/lib/types";
+
+const TELEGRAM_BOT_URL = "https://t.me/aztair_finance_bot";
+const TELEGRAM_BOT_HANDLE = "@aztair_finance_bot";
 
 export default function BotPairingPage() {
   const [botStatus, setBotStatus] = useState<BotStatusMap>({
@@ -103,7 +108,15 @@ export default function BotPairingPage() {
                 </div>
                 <div>
                   <h3 className="font-bold text-foreground text-base">Telegram Bot</h3>
-                  <span className="text-xs text-muted-foreground">@AIFinanceExpenseBot</span>
+                  <a
+                    href={TELEGRAM_BOT_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-sky-600 dark:text-sky-400 hover:underline"
+                  >
+                    <span>{TELEGRAM_BOT_HANDLE}</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
                 </div>
               </div>
 
@@ -124,7 +137,16 @@ export default function BotPairingPage() {
             </p>
           </div>
 
-          <div className="pt-4 border-t border-border">
+          <div className="pt-4 border-t border-border space-y-2.5">
+            <a
+              href={TELEGRAM_BOT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-2 px-4 rounded-xl text-xs font-semibold bg-sky-500/10 hover:bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/25 transition-colors flex items-center justify-center gap-2"
+            >
+              <span>Buka Bot di Telegram ({TELEGRAM_BOT_URL.replace("https://", "")})</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
             <button
               onClick={() => handleGenerateCode("TELEGRAM")}
               disabled={loadingCode}
@@ -138,41 +160,51 @@ export default function BotPairingPage() {
         {/* WhatsApp Card */}
         <div className="p-6 rounded-3xl bg-card border border-border shadow-sm flex flex-col justify-between space-y-4">
           <div>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center justify-center font-bold">
                   <Bot className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="font-bold text-foreground text-base">WhatsApp Cloud Bot</h3>
-                  <span className="text-xs text-muted-foreground">+62 812-XXXX-XXXX (Cloud API)</span>
+                  <span className="text-xs text-muted-foreground">Meta WhatsApp Cloud API</span>
                 </div>
               </div>
 
-              {botStatus.WHATSAPP.connected ? (
-                <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Terhubung</span>
-                </span>
-              ) : (
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-secondary text-muted-foreground border border-border">
-                  Belum Terhubung
-                </span>
-              )}
+              <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25 shrink-0">
+                <Wrench className="w-3.5 h-3.5" />
+                <span>Under Development</span>
+              </span>
             </div>
 
             <p className="text-xs text-muted-foreground mt-4 leading-relaxed">
               Integrasi langsung via Meta WhatsApp Cloud API untuk pencatatan instan melalui pesan harian WhatsApp Anda.
             </p>
+
+            <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-xs text-amber-700 dark:text-amber-300 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Integrasi WhatsApp saat ini masih <strong>Under Development</strong>. Sementara waktu, silakan gunakan{" "}
+                <a
+                  href={TELEGRAM_BOT_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold underline hover:text-amber-800 dark:hover:text-amber-200"
+                >
+                  {TELEGRAM_BOT_HANDLE}
+                </a>{" "}
+                di Telegram.
+              </span>
+            </div>
           </div>
 
           <div className="pt-4 border-t border-border">
             <button
-              onClick={() => handleGenerateCode("WHATSAPP")}
-              disabled={loadingCode}
-              className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground transition-colors shadow-sm"
+              type="button"
+              disabled
+              className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-secondary text-muted-foreground border border-border opacity-60 cursor-not-allowed"
             >
-              {loadingCode && pairingPlatform === "WHATSAPP" ? "Menghasilkan Kode..." : "Hubungkan Akun WhatsApp"}
+              Segera Hadir (Under Development)
             </button>
           </div>
         </div>
@@ -189,7 +221,23 @@ export default function BotPairingPage() {
               /pair {pairingCode}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Buka aplikasi {pairingPlatform} Anda, cari bot kami, dan kirim pesan persis seperti di atas.
+              Buka aplikasi {pairingPlatform} Anda
+              {pairingPlatform === "TELEGRAM" && (
+                <>
+                  {" "}
+                  di{" "}
+                  <a
+                    href={TELEGRAM_BOT_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-sky-600 dark:text-sky-400 hover:underline inline-flex items-center gap-0.5"
+                  >
+                    <span>{TELEGRAM_BOT_HANDLE}</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </>
+              )}
+              , lalu kirim pesan persis seperti di atas.
             </p>
           </div>
 

@@ -493,8 +493,19 @@ export default function SettingsPage() {
               </div>
 
               <div className="space-y-2 pt-1 text-xs">
-                <div className="flex items-center justify-between p-2 rounded-lg bg-card border border-border">
-                  <span className="text-muted-foreground">Telegram</span>
+                <div className="flex items-center justify-between p-2 rounded-lg bg-card border border-border gap-2">
+                  <div>
+                    <span className="text-muted-foreground block">Telegram</span>
+                    <a
+                      href="https://t.me/aztair_finance_bot"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] font-medium text-sky-600 dark:text-sky-400 hover:underline inline-flex items-center gap-1"
+                    >
+                      <span>@aztair_finance_bot</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
                   <span
                     className={`font-semibold ${
                       botStatus?.TELEGRAM?.connected
@@ -505,16 +516,10 @@ export default function SettingsPage() {
                     {botStatus?.TELEGRAM?.connected ? "Terhubung ✅" : "Belum Terhubung"}
                   </span>
                 </div>
-                <div className="flex items-center justify-between p-2 rounded-lg bg-card border border-border">
+                <div className="flex items-center justify-between p-2 rounded-lg bg-card border border-border gap-2">
                   <span className="text-muted-foreground">WhatsApp</span>
-                  <span
-                    className={`font-semibold ${
-                      botStatus?.WHATSAPP?.connected
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    {botStatus?.WHATSAPP?.connected ? "Terhubung ✅" : "Belum Terhubung"}
+                  <span className="font-semibold text-amber-600 dark:text-amber-400">
+                    Under Development
                   </span>
                 </div>
               </div>

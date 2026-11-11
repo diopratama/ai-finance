@@ -12,6 +12,7 @@ import {
   LogOut,
   ShieldCheck,
   Eye,
+  EyeOff,
   Check,
   Share2,
   TrendingUp,
@@ -34,7 +35,8 @@ import {
   updatePortfolioStrategy,
 } from "@/lib/api";
 import { Wallet, WalletMember, PortfolioReview, MarketRates, PortfolioStrategyPreset } from "@/lib/types";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, formatMaskedCurrency } from "@/lib/utils";
+import { useBalanceVisibility } from "@/lib/useBalanceVisibility";
 
 const TYPE_PRESETS = [
   "BANK",
@@ -70,6 +72,7 @@ export default function WalletsPage() {
   const [marketRates, setMarketRates] = useState<MarketRates | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [filterTab, setFilterTab] = useState<"ALL" | "PERSONAL" | "SHARED" | "INVESTMENT">("ALL");
+  const { hideAll, isWalletHidden, toggleHideAll, toggleWalletVisibility } = useBalanceVisibility();
 
   // Modals state
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
@@ -399,6 +402,20 @@ export default function WalletsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
           <button
+            type="button"
+            onClick={toggleHideAll}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-colors shadow-sm ${
+              hideAll
+                ? "bg-accent border-[#f0b000]/40 text-[#8a6300] dark:text-[#f0b000]"
+                : "bg-card border-border hover:bg-accent text-foreground"
+            }`}
+            title={hideAll ? "Tampilkan semua saldo dompet" : "Sembunyikan semua saldo dompet"}
+            aria-pressed={hideAll}
+          >
+            {hideAll ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+            <span>{hideAll ? "Tampilkan Semua Saldo" : "Sembunyikan Semua Saldo"}</span>
+          </button>
+          <button
             onClick={() => handleOpenReset("ALL")}
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-card border border-rose-500/30 hover:bg-rose-500/10 text-rose-600 dark:text-rose-400 transition-colors shadow-sm"
             title="Nolkan Saldo Dompet (Wajib Password)"
@@ -456,7 +473,7 @@ export default function WalletsPage() {
             Total Saldo Seluruh Dompet
           </span>
           <div className="text-2xl font-extrabold text-foreground mt-2">
-            {formatCurrency(totalBalance, "IDR")}
+            {hideAll ? formatMaskedCurrency("IDR") : formatCurrency(totalBalance, "IDR")}
           </div>
           <div className="text-xs text-muted-foreground mt-2 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[#f0b000]" />
@@ -470,7 +487,7 @@ export default function WalletsPage() {
             Saldo Dompet Pribadi
           </span>
           <div className="text-2xl font-bold text-foreground mt-2">
-            {formatCurrency(personalBalance, "IDR")}
+            {hideAll ? formatMaskedCurrency("IDR") : formatCurrency(personalBalance, "IDR")}
           </div>
           <div className="text-xs text-muted-foreground mt-2">
             {wallets.filter((w) => !w.is_shared).length} dompet milik pribadi
@@ -486,7 +503,7 @@ export default function WalletsPage() {
             <Users className="w-4 h-4 text-primary" />
           </div>
           <div className="text-2xl font-bold text-[#8a6300] dark:text-[#f0b000] mt-2">
-            {formatCurrency(sharedBalance, "IDR")}
+            {hideAll ? formatMaskedCurrency("IDR") : formatCurrency(sharedBalance, "IDR")}
           </div>
           <div className="text-xs text-muted-foreground mt-2">
             {wallets.filter((w) => w.is_shared).length} dompet bersama terhubung
@@ -502,7 +519,7 @@ export default function WalletsPage() {
             <TrendingUp className="w-4 h-4 text-violet-600 dark:text-violet-400" />
           </div>
           <div className="text-2xl font-bold text-violet-600 dark:text-violet-400 mt-2">
-            {formatCurrency(portfolioReview?.total_investment_balance || 0, "IDR")}
+            {hideAll ? formatMaskedCurrency("IDR") : formatCurrency(portfolioReview?.total_investment_balance || 0, "IDR")}
           </div>
           <div className="text-xs text-muted-foreground mt-2 flex items-center justify-between">
             <span>{investmentCount} dompet investasi</span>
@@ -576,7 +593,7 @@ export default function WalletsPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-foreground">
-                          {formatCurrency(comp.actual_amount, "IDR")}
+                          {hideAll ? formatMaskedCurrency("IDR") : formatCurrency(comp.actual_amount, "IDR")}
                         </span>
                         <span
                           className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
@@ -590,8 +607,8 @@ export default function WalletsPage() {
                           {comp.action === "IDEAL"
                             ? "Ideal"
                             : comp.action === "UNDERWEIGHT"
-                            ? `+ Tambah ${formatCurrency(comp.delta_amount)}`
-                            : `- Kurangi ${formatCurrency(Math.abs(comp.delta_amount))}`}
+                            ? `+ Tambah ${hideAll ? formatMaskedCurrency("IDR") : formatCurrency(comp.delta_amount)}`
+                            : `- Kurangi ${hideAll ? formatMaskedCurrency("IDR") : formatCurrency(Math.abs(comp.delta_amount))}`}
                         </span>
                       </div>
                     </div>
@@ -603,7 +620,7 @@ export default function WalletsPage() {
                           Aktual Anda: <strong className="text-foreground">{comp.actual_pct}%</strong>
                         </span>
                         <span>
-                          Target Referensi: <strong className="text-foreground">{comp.target_pct}%</strong> ({formatCurrency(comp.ideal_amount)})
+                          Target Referensi: <strong className="text-foreground">{comp.target_pct}%</strong> ({hideAll ? formatMaskedCurrency("IDR") : formatCurrency(comp.ideal_amount)})
                         </span>
                       </div>
                       <div className="relative w-full bg-card h-2.5 rounded-full overflow-hidden border border-border">
@@ -725,6 +742,7 @@ export default function WalletsPage() {
           const hasCommitment = (w.allocated_budget || 0) > 0;
           const isShortfall = (w.shortfall_amount || 0) > 0;
           const isOwner = w.access_role === "OWNER" || !w.is_shared;
+          const walletHidden = isWalletHidden(w.id);
 
           return (
             <div
@@ -770,6 +788,20 @@ export default function WalletsPage() {
                   </div>
 
                   <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleWalletVisibility(w.id)}
+                      className={`transition-colors p-1 rounded-md ${
+                        walletHidden
+                          ? "text-[#8a6300] dark:text-[#f0b000] hover:bg-accent"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      title={walletHidden ? "Tampilkan saldo dompet ini" : "Sembunyikan saldo dompet ini"}
+                      aria-label={walletHidden ? `Tampilkan saldo ${w.name}` : `Sembunyikan saldo ${w.name}`}
+                      aria-pressed={walletHidden}
+                    >
+                      {walletHidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                    </button>
                     {isOwner && (
                       <button
                         onClick={() => handleOpenReset(w.id)}
@@ -823,10 +855,12 @@ export default function WalletsPage() {
                 <div className="mt-4 space-y-1">
                   <span className="text-xs text-muted-foreground">Saldo Aktual</span>
                   <div className="text-2xl font-extrabold text-foreground tracking-tight flex items-baseline gap-2 flex-wrap">
-                    <span>{formatCurrency(w.balance, w.currency)}</span>
+                    <span>
+                      {walletHidden ? formatMaskedCurrency(w.currency) : formatCurrency(w.balance, w.currency)}
+                    </span>
                     {w.currency && w.currency !== "IDR" && (
                       <span className="text-xs font-semibold text-muted-foreground bg-secondary px-2 py-0.5 rounded-full border border-border">
-                        ≈ {formatCurrency(w.balance_in_base || w.balance)}
+                        ≈ {walletHidden ? formatMaskedCurrency("IDR") : formatCurrency(w.balance_in_base || w.balance)}
                       </span>
                     )}
                   </div>
@@ -835,12 +869,14 @@ export default function WalletsPage() {
                     <div className="space-y-1 pt-1.5 border-t border-border/50 text-[11px] text-muted-foreground">
                       <div className="flex justify-between items-center">
                         <span>Komitmen Pos Anggaran:</span>
-                        <strong className="text-foreground">{formatCurrency(w.remaining_commitment || 0)}</strong>
+                        <strong className="text-foreground">
+                          {walletHidden ? formatMaskedCurrency("IDR") : formatCurrency(w.remaining_commitment || 0)}
+                        </strong>
                       </div>
                       <div className="flex justify-between items-center">
                         <span>Saldo Bebas (Unallocated):</span>
                         <strong className="text-emerald-600 dark:text-emerald-400 font-bold">
-                          {formatCurrency(w.free_balance || 0)}
+                          {walletHidden ? formatMaskedCurrency("IDR") : formatCurrency(w.free_balance || 0)}
                         </strong>
                       </div>
                       <div className="flex justify-between items-center pt-0.5">
@@ -852,7 +888,9 @@ export default function WalletsPage() {
                               : "text-emerald-600 dark:text-emerald-400 font-bold"
                           }
                         >
-                          {isShortfall ? `Kurang ${formatCurrency(w.shortfall_amount || 0)}` : "Terdanai Penuh"}
+                          {isShortfall
+                            ? `Kurang ${walletHidden ? formatMaskedCurrency("IDR") : formatCurrency(w.shortfall_amount || 0)}`
+                            : "Terdanai Penuh"}
                         </span>
                       </div>
                     </div>
