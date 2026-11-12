@@ -583,11 +583,11 @@ export default function InvestmentResearchPage() {
             </div>
           )}
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
             {isRunning ? (
               <button
                 onClick={handleStopSwarm}
-                className="px-5 py-2.5 rounded-2xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition"
+                className="w-full sm:w-auto justify-center px-5 py-2.5 min-h-[44px] rounded-2xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition"
               >
                 <Square className="w-4 h-4 fill-current" />
                 <span>Hentikan Analisis</span>
@@ -596,7 +596,7 @@ export default function InvestmentResearchPage() {
               <button
                 onClick={() => handleRunSwarm()}
                 disabled={analysisType === "analyze" && !symbol.trim()}
-                className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-[#f0b000] to-amber-600 hover:opacity-95 text-white font-bold text-xs flex items-center gap-2 shadow-md transition disabled:opacity-50"
+                className="w-full sm:w-auto justify-center px-6 py-2.5 min-h-[44px] rounded-2xl bg-gradient-to-r from-[#f0b000] to-amber-600 hover:opacity-95 text-white font-bold text-xs flex items-center gap-2 shadow-md transition disabled:opacity-50"
               >
                 {analysisType === "recommend" ? <Radar className="w-4 h-4" /> : <Play className="w-4 h-4 fill-current" />}
                 <span>
@@ -926,20 +926,20 @@ export default function InvestmentResearchPage() {
               </div>
 
               {/* Metrics Pill Group */}
-              <div className="flex items-center gap-3 shrink-0">
-                <div className="p-3.5 rounded-2xl bg-secondary/60 border border-border text-center min-w-[100px]">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3 w-full lg:w-auto shrink-0">
+                <div className="p-3.5 rounded-2xl bg-secondary/60 border border-border text-center">
                   <div className="text-[10px] uppercase font-bold text-muted-foreground">Confidence</div>
                   <div className="text-lg font-black text-foreground">{rec.confidence_pct}%</div>
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-secondary/60 border border-border text-center min-w-[100px]">
+                <div className="p-3.5 rounded-2xl bg-secondary/60 border border-border text-center">
                   <div className="text-[10px] uppercase font-bold text-muted-foreground">Kualitas Funda</div>
                   <div className="text-lg font-black text-[#8a6300] dark:text-[#f0b000]">
                     {rec.fundamental_quality_score}/10
                   </div>
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-secondary/60 border border-border text-center min-w-[110px]">
+                <div className="p-3.5 rounded-2xl bg-secondary/60 border border-border text-center">
                   <div className="text-[10px] uppercase font-bold text-muted-foreground">Status Valuasi</div>
                   <div className="text-sm font-black text-foreground truncate">
                     {rec.valuation_summary?.current_valuation_status || "FAIR"}

@@ -1,11 +1,17 @@
 // Build version timestamp: 20261108-223500
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AppShell } from "@/components/layout/AppShell";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
 
 export const metadata: Metadata = {
   title: "AI-Finance | Smart Wealth, Payday Budgeting & AI Financial Planner",

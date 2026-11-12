@@ -220,9 +220,9 @@ export default function FinancialPlannerPage() {
   const shariaActive = profile?.sharia_preference ?? healthContext?.sharia_preference ?? false;
 
   return (
-    <div className="max-w-7xl mx-auto h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6">
+    <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-6 lg:h-[calc(100dvh-8rem)]">
       {/* Left Chat Area */}
-      <div className="flex-1 flex flex-col bg-card border border-border rounded-3xl overflow-hidden shadow-sm">
+      <div className="flex-1 flex flex-col bg-card border border-border rounded-3xl overflow-hidden shadow-sm h-[68dvh] min-h-[420px] lg:h-full">
         {/* Chat Header */}
         <div className="p-4 border-b border-border bg-card/60 backdrop-blur-sm flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -380,14 +380,14 @@ export default function FinancialPlannerPage() {
             type="text"
             value={inputMsg}
             onChange={(e) => setInputMsg(e.target.value)}
-            placeholder="Ceritakan kondisimu atau tanyakan strategi keuangan apa pun..."
-            className="flex-1 px-4 py-3 rounded-xl bg-secondary border border-border text-foreground text-xs focus:outline-none focus:border-[#f0b000]"
+            placeholder="Ceritakan kondisimu atau tanyakan strategi keuangan..."
+            className="flex-1 min-w-0 px-4 py-3 min-h-[44px] rounded-xl bg-secondary border border-border text-foreground text-xs focus:outline-none focus:border-[#f0b000]"
             disabled={isStreaming}
           />
           <button
             type="submit"
             disabled={!inputMsg.trim() || isStreaming}
-            className="px-5 py-3 rounded-xl bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground font-bold text-xs flex items-center gap-2 transition-colors shadow-md shadow-[#f0b000]/20"
+            className="px-4 sm:px-5 py-3 min-h-[44px] rounded-xl bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-foreground font-bold text-xs flex items-center justify-center gap-2 transition-colors shadow-md shadow-[#f0b000]/20 shrink-0"
           >
             <Send className="w-4 h-4" />
             <span className="hidden sm:inline">Kirim</span>
@@ -396,7 +396,7 @@ export default function FinancialPlannerPage() {
       </div>
 
       {/* Right Sidebar: Progressive Personalization + Live Snapshot + Allocation */}
-      <div className="w-full lg:w-80 xl:w-96 flex flex-col gap-4 overflow-y-auto">
+      <div className="w-full lg:w-80 xl:w-96 flex flex-col gap-4 lg:overflow-y-auto">
         {/* Card 1: Optional Profile Completeness & Smart Nudge */}
         <div className="p-5 rounded-3xl bg-card border border-border shadow-sm space-y-3.5">
           <div className="flex items-center justify-between">

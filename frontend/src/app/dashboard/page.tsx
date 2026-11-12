@@ -21,6 +21,9 @@ import {
   AlertTriangle,
   Eye,
   EyeOff,
+  ArrowUpRight,
+  ArrowDownLeft,
+  ArrowLeftRight,
 } from "lucide-react";
 import {
   getWallets,
@@ -66,10 +69,13 @@ export default function DashboardOverviewPage() {
   const [fireMetrics, setFireMetrics] = useState<FIREMetrics | null>(null);
   const [healthContext, setHealthContext] = useState<PlannerHealthContext | null>(null);
   const [allocation, setAllocation] = useState<MonthlyAllocationResponse | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const { hideAll, isWalletHidden, toggleHideAll, toggleWalletVisibility } = useBalanceVisibility();
 
   useEffect(() => {
+    let active = true;
     async function loadData() {
+      setLoading(true);
       try {
         const [wRes, txRes, sumRes, fireRes, healthRes, allocRes] = await Promise.all([
           getWallets(selectedMonth),
@@ -79,6 +85,7 @@ export default function DashboardOverviewPage() {
           getPlannerOverview(),
           getBudgetAllocation(selectedMonth).catch(() => null),
         ]);
+        if (!active) return;
         setWallets(wRes.wallets);
         setTotalBalance(wRes.total_balance);
         if (wRes.portfolio_review) {
@@ -91,9 +98,14 @@ export default function DashboardOverviewPage() {
         setAllocation(allocRes);
       } catch (err) {
         console.error("Error loading dashboard data", err);
+      } finally {
+        if (active) setLoading(false);
       }
     }
     loadData();
+    return () => {
+      active = false;
+    };
   }, [selectedMonth]);
 
   const monthly = summary?.monthly;
@@ -110,17 +122,18 @@ export default function DashboardOverviewPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Dashboard Finansial</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Ringkasan kekayaan bersih, laporan arus kas bulanan, evaluasi portofolio investasi, dan progres FIRE.
+            Ringkasan saldo, arus kas bulanan, portofolio, dan progres FIRE.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Month Selector */}
           <div className="flex items-center gap-1 p-1 rounded-xl bg-card border border-border shadow-sm">
             <button
               type="button"
               onClick={() => setSelectedMonth((m) => shiftMonthKey(m, -1))}
-              className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+              className="p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="Bulan Sebelumnya"
+              aria-label="Bulan Sebelumnya"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -131,8 +144,9 @@ export default function DashboardOverviewPage() {
             <button
               type="button"
               onClick={() => setSelectedMonth((m) => shiftMonthKey(m, 1))}
-              className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+              className="p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="Bulan Berikutnya"
+              aria-label="Bulan Berikutnya"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -141,7 +155,7 @@ export default function DashboardOverviewPage() {
           <button
             type="button"
             onClick={toggleHideAll}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-colors ${
+            className={`flex items-center gap-2 px-3.5 py-2 min-h-[40px] rounded-xl text-xs font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
               hideAll
                 ? "bg-accent border-[#f0b000]/40 text-[#8a6300] dark:text-[#f0b000]"
                 : "bg-card border-border hover:bg-accent text-foreground"
@@ -178,6 +192,17 @@ export default function DashboardOverviewPage() {
       </div>
 
       {/* Top 4 Metric Cards */}
+      {loading && wallets.length === 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Memuat ringkasan dashboard">
+          {[1, 2, 3, 4].map((idx) => (
+            <div key={idx} className="p-5 rounded-2xl bg-card border border-border shadow-sm space-y-3 animate-pulse">
+              <div className="h-4 w-28 rounded bg-secondary" />
+              <div className="h-8 w-40 rounded bg-secondary" />
+              <div className="h-3 w-24 rounded bg-secondary" />
+            </div>
+          ))}
+        </div>
+      ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Net Worth */}
         <div className="p-5 rounded-2xl bg-card border border-border shadow-sm">
@@ -263,12 +288,13 @@ export default function DashboardOverviewPage() {
           >
             {formatCurrency(monthly ? monthly.net_cashflow : summary?.net_savings || 0, "IDR")}
           </div>
-          <div className="text-[11px] text-[#8a6300] dark:text-[#f0b000] mt-2 font-semibold flex items-center justify-between">
+          <div className="text-xs text-[#8a6300] dark:text-[#f0b000] mt-2 font-semibold flex items-center justify-between">
             <span>Rasio Tabungan: {monthly ? `${monthly.savings_rate}%` : "0%"}</span>
             <span>{monthly?.tx_count || 0} transaksi</span>
           </div>
         </div>
       </div>
+      )}
 
       {/* Monthly Reporting Summary Section (6-Month Cashflow Trend + Category Breakdown) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -300,7 +326,7 @@ export default function DashboardOverviewPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-6 gap-3 pt-4 items-end h-44 border-b border-border pb-3">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 sm:gap-3 pt-4 items-end border-b border-border pb-3">
             {trendList.map((item) => {
               const incHeight = Math.max(4, Math.round(((item.income || 0) / maxTrendVal) * 120));
               const expHeight = Math.max(4, Math.round(((item.expense || 0) / maxTrendVal) * 120));
@@ -664,7 +690,7 @@ export default function DashboardOverviewPage() {
                     <button
                       type="button"
                       onClick={() => toggleWalletVisibility(w.id)}
-                      className={`p-1.5 rounded-lg transition-colors ${
+                      className={`p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                         walletHidden
                           ? "text-[#8a6300] dark:text-[#f0b000] bg-accent/60 hover:bg-accent"
                           : "text-muted-foreground hover:text-foreground hover:bg-card"
@@ -673,7 +699,7 @@ export default function DashboardOverviewPage() {
                       aria-label={walletHidden ? `Tampilkan saldo ${w.name}` : `Sembunyikan saldo ${w.name}`}
                       aria-pressed={walletHidden}
                     >
-                      {walletHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                      {walletHidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
@@ -704,8 +730,22 @@ export default function DashboardOverviewPage() {
               {recentTransactions.map((tx) => (
                 <div key={tx.id} className="py-3 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-secondary border border-border flex items-center justify-center text-xs font-bold">
-                      {tx.type === "EXPENSE" ? "💸" : tx.type === "INCOME" ? "💰" : "🔄"}
+                    <div
+                      className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${
+                        tx.type === "EXPENSE"
+                          ? "bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400"
+                          : tx.type === "INCOME"
+                          ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                          : "bg-accent border-[#f0b000]/30 text-[#8a6300] dark:text-[#f0b000]"
+                      }`}
+                    >
+                      {tx.type === "EXPENSE" ? (
+                        <ArrowUpRight className="w-4 h-4" />
+                      ) : tx.type === "INCOME" ? (
+                        <ArrowDownLeft className="w-4 h-4" />
+                      ) : (
+                        <ArrowLeftRight className="w-4 h-4" />
+                      )}
                     </div>
                     <div>
                       <div className="text-sm font-semibold text-foreground">{tx.description}</div>

@@ -89,10 +89,10 @@ export default function BotPairingPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          Integrasi Chatbot (WhatsApp &amp; Telegram)
+          Integrasi Chatbot
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Catat pengeluaran semudah chat ke teman. Bot otomatis mendeteksi pos anggaran dan dompet penempatan dana (Fund Location).
+          Hubungkan akun Telegram untuk mencatat transaksi dan memotong saldo dompet terkait otomatis lewat chat.
         </p>
       </div>
 
@@ -252,17 +252,17 @@ export default function BotPairingPage() {
       )}
 
       {/* Simulator Section: Test Chatbot In-Browser */}
-      <div className="p-6 rounded-3xl bg-card border border-border shadow-sm space-y-6">
+      <div className="p-5 sm:p-6 rounded-3xl bg-card border border-border shadow-sm space-y-6">
         <div>
           <div className="flex items-center gap-2 text-[#8a6300] dark:text-[#f0b000] text-xs font-bold uppercase tracking-wider">
             <Sparkles className="w-4 h-4" />
-            <span>Interactive Chatbot Simulator</span>
+            <span>Simulator Chatbot</span>
           </div>
           <h2 className="text-lg font-bold text-foreground mt-1">
-            Uji Coba Pengenalan Pos Anggaran &amp; Dompet Otomatis
+            Uji Coba Pengenalan Pos Anggaran &amp; Dompet
           </h2>
           <p className="text-xs text-muted-foreground mt-1">
-            Coba ketikkan kalimat pengeluaran dalam bahasa sehari-hari. Sistem kami otomatis memotong dompet Fund Location pos terkait meskipun Anda tidak menyebut nama bank di chat!
+            Ketik kalimat transaksi sehari-hari. Sistem otomatis mencocokkan pos anggaran dan dompet terkait meskipun nama bank tidak ditulis.
           </p>
         </div>
 
@@ -271,22 +271,22 @@ export default function BotPairingPage() {
           <span className="text-xs text-muted-foreground font-medium">Contoh Kalimat Siap Uji:</span>
           <div className="flex flex-wrap gap-2">
             {[
-              { label: "⛽ Isi Bensin 250rb (Auto-Danamon)", text: "isi bensin 250rb", src: "WHATSAPP" },
-              { label: "🪙 Beli Emas Antam 2.5 gram", text: "beli emas 2.5 gram di antam", src: "TELEGRAM" },
-              { label: "💵 Topup 50 USD", text: "topup 50 usd", src: "TELEGRAM" },
-              { label: "🔄 Topup GoPay 100rb dari BCA", text: "topup gopay 100rb dari bca", src: "WHATSAPP" },
-              { label: "📈 Transfer 1jt dari Mandiri ke Bibit", text: "transfer 1jt dari mandiri ke bibit", src: "TELEGRAM" },
-              { label: "🤖 /finplanner (Konsultasi AI)", text: "/finplanner", src: "TELEGRAM" },
-              { label: "🌐 Tanya AI Data Live", text: "/finplanner Berapa harga emas antam dan kurs USD hari ini?", src: "TELEGRAM" },
-              { label: "💳 /saldo (Multi-Currency & Emas)", text: "/saldo", src: "TELEGRAM" },
-              { label: "📊 /laporan (Ringkasan Bulanan)", text: "/laporan", src: "TELEGRAM" },
-              { label: "💼 /portofolio (Review Investasi)", text: "/portofolio", src: "TELEGRAM" },
+              { label: "Isi Bensin 250rb", text: "isi bensin 250rb", src: "WHATSAPP" },
+              { label: "Beli Emas Antam 2.5 gram", text: "beli emas 2.5 gram di antam", src: "TELEGRAM" },
+              { label: "Topup 50 USD", text: "topup 50 usd", src: "TELEGRAM" },
+              { label: "Topup GoPay 100rb dari BCA", text: "topup gopay 100rb dari bca", src: "WHATSAPP" },
+              { label: "Transfer 1jt Mandiri ke Bibit", text: "transfer 1jt dari mandiri ke bibit", src: "TELEGRAM" },
+              { label: "/finplanner (Konsultasi AI)", text: "/finplanner", src: "TELEGRAM" },
+              { label: "Tanya Harga Emas & Kurs Live", text: "/finplanner Berapa harga emas antam dan kurs USD hari ini?", src: "TELEGRAM" },
+              { label: "/saldo (Cek Semua Dompet)", text: "/saldo", src: "TELEGRAM" },
+              { label: "/laporan (Ringkasan Bulanan)", text: "/laporan", src: "TELEGRAM" },
+              { label: "/portofolio (Review Investasi)", text: "/portofolio", src: "TELEGRAM" },
             ].map((p, idx) => (
               <button
                 key={idx}
                 type="button"
                 onClick={() => handleQuickPreset(p.text, p.src)}
-                className="px-3 py-1.5 rounded-xl bg-secondary hover:bg-accent border border-border text-foreground text-xs font-medium transition-colors"
+                className="px-3 py-2 rounded-xl bg-secondary hover:bg-accent border border-border text-foreground text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {p.label}
               </button>
@@ -296,40 +296,41 @@ export default function BotPairingPage() {
 
         {/* Simulator Input Form */}
         <form onSubmit={handleSimulateSend} className="space-y-3">
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
               value={simText}
               onChange={(e) => setSimText(e.target.value)}
-              placeholder="Ketik pesan seperti di chat WhatsApp/Telegram..."
-              className="flex-1 px-4 py-3 rounded-xl bg-secondary border border-border text-foreground text-sm focus:outline-none focus:border-[#f0b000]"
+              placeholder="Ketik pesan seperti di chat Telegram..."
+              aria-label="Pesan simulasi chatbot"
+              className="flex-1 px-4 py-3 min-h-[44px] rounded-xl bg-secondary border border-border text-foreground text-sm focus:outline-none focus:border-[#f0b000]"
               required
             />
             <button
               type="submit"
               disabled={simLoading}
-              className="px-5 py-3 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs flex items-center gap-2 shadow-sm shadow-[#f0b000]/20 transition-colors"
+              className="px-5 py-3 min-h-[44px] rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs flex items-center justify-center gap-2 shadow-sm shadow-[#f0b000]/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Send className="w-4 h-4" />
-              <span>{simLoading ? "Parsing..." : "Kirim Chat"}</span>
+              <span>{simLoading ? "Memproses..." : "Kirim Chat"}</span>
             </button>
           </div>
         </form>
 
         {/* Simulator Result Card */}
         {simResult && (
-          <div className="p-5 rounded-2xl bg-secondary/80 border border-border flex items-start gap-3 mt-4">
-            <div className="w-8 h-8 rounded-xl bg-accent text-[#8a6300] dark:text-[#f0b000] flex items-center justify-center shrink-0 font-bold text-sm">
-              🤖
+          <div className="p-4 sm:p-5 rounded-2xl bg-secondary/80 border border-border flex items-start gap-3 mt-4">
+            <div className="w-8 h-8 rounded-xl bg-accent text-[#8a6300] dark:text-[#f0b000] flex items-center justify-center shrink-0">
+              <Bot className="w-4 h-4" />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div className="text-xs font-bold text-[#8a6300] dark:text-[#f0b000] mb-1">Balasan Bot:</div>
-              <pre className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed">
+              <pre className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed break-words">
                 {simResult.message}
               </pre>
 
               {simResult.parsed && (
-                <div className="mt-3 pt-3 border-t border-border flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                <div className="mt-3 pt-3 border-t border-border flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <span>Tipe: <strong className="text-foreground">{simResult.parsed.type}</strong></span>
                   <span>&bull;</span>
                   <span>Kategori: <strong className="text-foreground">{simResult.parsed.category_name}</strong></span>

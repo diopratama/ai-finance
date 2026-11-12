@@ -21,7 +21,15 @@ import {
   AlertTriangle,
   Sparkles,
   Lock,
+  Coins,
+  DollarSign,
+  RefreshCw,
+  SlidersHorizontal,
+  Star,
+  AlertCircle,
+  X,
 } from "lucide-react";
+import { ConfirmModal } from "@/components/ConfirmModal";
 import {
   getWallets,
   createWallet,
@@ -125,6 +133,15 @@ export default function WalletsPage() {
     LAND: 5,
   });
   const [strategySaving, setStrategySaving] = useState<boolean>(false);
+  const [feedbackError, setFeedbackError] = useState<string>("");
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    confirmLabel: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState<boolean>(false);
 
   const handleOpenStrategyModal = () => {
     if (portfolioReview?.portfolio_strategy) {
@@ -135,6 +152,7 @@ export default function WalletsPage() {
 
   const handleSaveStrategy = async () => {
     setStrategySaving(true);
+    setFeedbackError("");
     try {
       const res = await updatePortfolioStrategy(
         selectedStrategy,
@@ -145,7 +163,7 @@ export default function WalletsPage() {
       }
       setShowStrategyModal(false);
     } catch (e: any) {
-      alert("Gagal memperbarui strategi: " + e.message);
+      setFeedbackError("Gagal memperbarui strategi: " + (e?.message || "Terjadi kesalahan."));
     } finally {
       setStrategySaving(false);
     }
@@ -304,11 +322,17 @@ export default function WalletsPage() {
     refreshWallets();
   };
 
-  const handleDelete = async (id: string) => {
-    if (confirm("Apakah Anda yakin ingin mengarsipkan dompet ini?")) {
-      await deleteWallet(id);
-      refreshWallets();
-    }
+  const handleDelete = (w: Wallet) => {
+    setConfirmState({
+      open: true,
+      title: "Arsipkan Dompet?",
+      description: `Dompet "${w.name}" akan diarsipkan dan disembunyikan dari daftar dompet aktif.`,
+      confirmLabel: "Ya, Arsipkan",
+      onConfirm: async () => {
+        await deleteWallet(w.id);
+        await refreshWallets();
+      },
+    });
   };
 
   const handleOpenManageMembers = (w: Wallet) => {
@@ -346,6 +370,7 @@ export default function WalletsPage() {
 
   const handleUpdateRole = async (memberUserId: string, newRole: "EDITOR" | "VIEWER") => {
     if (!managingMembersWallet) return;
+    setInviteError("");
     try {
       await updateWalletMemberRole(managingMembersWallet.id, memberUserId, newRole);
       const updated = await getWallets();
@@ -353,32 +378,47 @@ export default function WalletsPage() {
       if (updatedW) setManagingMembersWallet(updatedW);
       await refreshWallets();
     } catch (err: any) {
-      alert(err.message || "Gagal mengubah role anggota");
+      setInviteError(err.message || "Gagal mengubah role anggota");
     }
   };
 
-  const handleRemoveMember = async (memberUserId: string) => {
+  const handleRemoveMember = (memberUserId: string) => {
     if (!managingMembersWallet) return;
-    if (!confirm("Hapus akses anggota ini dari dompet bersama?")) return;
-    try {
-      await removeWalletMember(managingMembersWallet.id, memberUserId);
-      const updated = await getWallets();
-      const updatedW = updated.wallets.find((w) => w.id === managingMembersWallet.id);
-      if (updatedW) setManagingMembersWallet(updatedW);
-      await refreshWallets();
-    } catch (err: any) {
-      alert(err.message || "Gagal menghapus anggota");
-    }
+    const targetWalletId = managingMembersWallet.id;
+    setConfirmState({
+      open: true,
+      title: "Hapus Akses Anggota?",
+      description: "Anggota ini tidak akan lagi bisa melihat atau mencatat transaksi di dompet bersama.",
+      confirmLabel: "Ya, Hapus Akses",
+      onConfirm: async () => {
+        try {
+          await removeWalletMember(targetWalletId, memberUserId);
+          const updated = await getWallets();
+          const updatedW = updated.wallets.find((w) => w.id === targetWalletId);
+          if (updatedW) setManagingMembersWallet(updatedW);
+          await refreshWallets();
+        } catch (err: any) {
+          setInviteError(err.message || "Gagal menghapus anggota");
+        }
+      },
+    });
   };
 
-  const handleLeaveWallet = async (walletId: string, memberUserId: string) => {
-    if (!confirm("Apakah Anda yakin ingin keluar dari dompet bersama ini?")) return;
-    try {
-      await removeWalletMember(walletId, memberUserId);
-      await refreshWallets();
-    } catch (err: any) {
-      alert(err.message || "Gagal keluar dari dompet bersama");
-    }
+  const handleLeaveWallet = (walletId: string, memberUserId: string) => {
+    setConfirmState({
+      open: true,
+      title: "Keluar dari Dompet Bersama?",
+      description: "Anda akan kehilangan akses ke dompet bersama ini sampai diundang kembali.",
+      confirmLabel: "Ya, Keluar",
+      onConfirm: async () => {
+        try {
+          await removeWalletMember(walletId, memberUserId);
+          await refreshWallets();
+        } catch (err: any) {
+          setFeedbackError(err.message || "Gagal keluar dari dompet bersama");
+        }
+      },
+    });
   };
 
   const displayedWallets = wallets.filter((w) => {
@@ -397,7 +437,7 @@ export default function WalletsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Dompet &amp; Akun Finansial</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Kelola saldo riil (Gajian, Kas, Investasi, Dompet Bersama) lengkap dengan evaluasi portofolio &amp; kontrol saldo.
+            Kelola rekening bank, kas, investasi, dan dompet bersama.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
@@ -440,32 +480,66 @@ export default function WalletsPage() {
         </div>
       </div>
 
+      {feedbackError && (
+        <div
+          role="alert"
+          className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-medium flex items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{feedbackError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFeedbackError("")}
+            aria-label="Tutup pesan error"
+            className="p-1.5 rounded-lg hover:bg-rose-500/15 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Live Market Rates Ticker */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-secondary/70 border border-border text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5 py-3 rounded-2xl bg-secondary/70 border border-border text-xs">
         <div className="flex items-center gap-2.5 flex-wrap">
           <span className="font-semibold text-foreground flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-[#8a6300] dark:text-[#f0b000]" />
             <span>Kurs &amp; Emas Terkini:</span>
           </span>
-          <span className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
-            <span>🪙 Emas Antam 1g:</span>
+          <span className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1.5">
+            <Coins className="w-3.5 h-3.5" />
+            <span>Emas Antam 1g:</span>
             <span>{formatCurrency(marketRates?.gold_antam_idr || marketRates?.gold_idr_per_gram || 2539000)}/gr</span>
           </span>
-          <span className="px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-bold flex items-center gap-1">
-            <span>🔄 Buyback:</span>
+          <span className="px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 font-bold flex items-center gap-1.5">
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Buyback:</span>
             <span>{formatCurrency(marketRates?.gold_buyback_idr || 2373000)}/gr</span>
           </span>
-          <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
-            <span>💵 USD/IDR:</span>
+          <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1.5">
+            <DollarSign className="w-3.5 h-3.5" />
+            <span>USD/IDR:</span>
             <span>{formatCurrency(marketRates?.usd_idr || 16850)}</span>
           </span>
         </div>
-        <span className="text-[11px] text-muted-foreground">
-          Sumber: {marketRates?.source || "IndoGold Antam & OpenFX"} &bull; Konversi live otomatis ke Rupiah
+        <span className="text-xs text-muted-foreground">
+          Sumber: {marketRates?.source || "IndoGold Antam & OpenFX"} &bull; Konversi live ke Rupiah
         </span>
       </div>
 
       {/* Balance Summary Cards */}
+      {loading && wallets.length === 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Memuat ringkasan dompet">
+          {[1, 2, 3, 4].map((idx) => (
+            <div key={idx} className="p-5 rounded-3xl bg-card border border-border shadow-sm space-y-3 animate-pulse">
+              <div className="h-3.5 w-32 rounded bg-secondary" />
+              <div className="h-7 w-40 rounded bg-secondary" />
+              <div className="h-3 w-24 rounded bg-secondary" />
+            </div>
+          ))}
+        </div>
+      ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Balance Card */}
         <div className="p-5 rounded-3xl bg-card border border-border shadow-sm flex flex-col justify-between">
@@ -529,6 +603,7 @@ export default function WalletsPage() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Investment Portfolio Review & Best Practice Comparison Panel */}
       {portfolioReview && (portfolioReview.has_investment_wallets || filterTab === "INVESTMENT") && (
@@ -566,9 +641,10 @@ export default function WalletsPage() {
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={handleOpenStrategyModal}
-                className="px-3.5 py-2 rounded-xl bg-secondary hover:bg-secondary/80 border border-border text-foreground text-xs font-semibold flex items-center gap-2 shadow-sm transition"
+                className="px-3.5 py-2 min-h-[38px] rounded-xl bg-secondary hover:bg-secondary/80 border border-border text-foreground text-xs font-semibold flex items-center gap-2 shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <span>⚙️ Ganti Strategi / Custom Target %</span>
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>Ganti Strategi / Target %</span>
               </button>
             </div>
           </div>
@@ -763,8 +839,9 @@ export default function WalletsPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-bold text-foreground text-base">{w.name}</h3>
                         {w.is_default && (
-                          <span className="px-2 py-0.5 rounded-md bg-[#f0b000]/20 border border-[#f0b000]/40 text-[#8a6300] dark:text-[#f0b000] text-[10px] font-bold">
-                            ⭐ Rekening Gajian
+                          <span className="px-2 py-0.5 rounded-md bg-[#f0b000]/20 border border-[#f0b000]/40 text-[#8a6300] dark:text-[#f0b000] text-[10px] font-bold inline-flex items-center gap-1">
+                            <Star className="w-3 h-3 fill-current" />
+                            <span>Rekening Gajian</span>
                           </span>
                         )}
                         {w.is_investment && (
@@ -787,14 +864,14 @@ export default function WalletsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-0.5 shrink-0">
                     <button
                       type="button"
                       onClick={() => toggleWalletVisibility(w.id)}
-                      className={`transition-colors p-1 rounded-md ${
+                      className={`transition-colors p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                         walletHidden
                           ? "text-[#8a6300] dark:text-[#f0b000] hover:bg-accent"
-                          : "text-muted-foreground hover:text-foreground"
+                          : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                       }`}
                       title={walletHidden ? "Tampilkan saldo dompet ini" : "Sembunyikan saldo dompet ini"}
                       aria-label={walletHidden ? `Tampilkan saldo ${w.name}` : `Sembunyikan saldo ${w.name}`}
@@ -804,9 +881,11 @@ export default function WalletsPage() {
                     </button>
                     {isOwner && (
                       <button
+                        type="button"
                         onClick={() => handleOpenReset(w.id)}
-                        className="text-muted-foreground hover:text-amber-500 transition-colors p-1"
+                        className="text-muted-foreground hover:text-amber-500 hover:bg-secondary transition-colors p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         title="Reset Saldo Dompet Ini ke Rp 0"
+                        aria-label={`Reset saldo ${w.name}`}
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
                       </button>
@@ -814,17 +893,21 @@ export default function WalletsPage() {
                     {/* Share / Member button */}
                     {isOwner ? (
                       <button
+                        type="button"
                         onClick={() => handleOpenManageMembers(w)}
-                        className="text-muted-foreground hover:text-primary transition-colors p-1"
+                        className="text-muted-foreground hover:text-primary hover:bg-secondary transition-colors p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         title="Bagikan / Kelola Anggota"
+                        aria-label={`Kelola anggota ${w.name}`}
                       >
                         <Share2 className="w-4 h-4" />
                       </button>
                     ) : (
                       <button
+                        type="button"
                         onClick={() => handleLeaveWallet(w.id, w.owner?.id || "")}
-                        className="text-muted-foreground hover:text-rose-500 transition-colors p-1"
+                        className="text-muted-foreground hover:text-rose-500 hover:bg-secondary transition-colors p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         title="Keluar dari Dompet Bersama"
+                        aria-label={`Keluar dari ${w.name}`}
                       >
                         <LogOut className="w-4 h-4" />
                       </button>
@@ -833,16 +916,20 @@ export default function WalletsPage() {
                     {isOwner && (
                       <>
                         <button
+                          type="button"
                           onClick={() => handleOpenEdit(w)}
-                          className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                          className="text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           title="Edit Dompet & Tipe"
+                          aria-label={`Edit ${w.name}`}
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => handleDelete(w.id)}
-                          className="text-muted-foreground hover:text-rose-500 transition-colors p-1"
+                          type="button"
+                          onClick={() => handleDelete(w)}
+                          className="text-muted-foreground hover:text-rose-500 hover:bg-secondary transition-colors p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           title="Arsipkan Dompet"
+                          aria-label={`Arsipkan ${w.name}`}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -874,7 +961,7 @@ export default function WalletsPage() {
                         </strong>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span>Saldo Bebas (Unallocated):</span>
+                        <span>Saldo Bebas:</span>
                         <strong className="text-emerald-600 dark:text-emerald-400 font-bold">
                           {walletHidden ? formatMaskedCurrency("IDR") : formatCurrency(w.free_balance || 0)}
                         </strong>
@@ -918,7 +1005,7 @@ export default function WalletsPage() {
       {/* Add / Edit Wallet Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90dvh] overflow-y-auto">
             <h2 className="text-lg font-bold text-foreground">
               {editingWallet ? "Edit Dompet & Tipe Akun" : "Tambah Dompet / Rekening Baru"}
             </h2>
@@ -960,7 +1047,7 @@ export default function WalletsPage() {
                           : "bg-secondary border-border text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      {p === "EMAS / LOGAM MULIA" ? "🪙 EMAS / LOGAM MULIA" : p === "VALAS / USD" ? "💵 VALAS / USD" : p}
+                      {p}
                     </button>
                   ))}
                 </div>
@@ -987,7 +1074,7 @@ export default function WalletsPage() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-semibold text-foreground block mb-1">
                     {currency === "GRAM"
@@ -1006,13 +1093,13 @@ export default function WalletsPage() {
                   />
                   {currency === "GRAM" && (
                     <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 font-semibold space-y-0.5">
-                      <div>🪙 Harga Emas Antam Live: ~{formatCurrency(marketRates?.gold_idr_per_gram || 2539000)}/gram</div>
+                      <div>Harga Emas Antam Live: ~{formatCurrency(marketRates?.gold_idr_per_gram || 2539000)}/gram</div>
                       <div>≈ Setara: {formatCurrency((parseFloat(balance) || 0) * (marketRates?.gold_idr_per_gram || 2539000))}</div>
                     </div>
                   )}
                   {currency === "USD" && (
                     <div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 font-semibold space-y-0.5">
-                      <div>💵 Kurs USD Live: ~{formatCurrency(marketRates?.usd_idr || 16850)}/$</div>
+                      <div>Kurs USD Live: ~{formatCurrency(marketRates?.usd_idr || 16850)}/$</div>
                       <div>≈ Setara: {formatCurrency((parseFloat(balance) || 0) * (marketRates?.usd_idr || 16850))}</div>
                     </div>
                   )}
@@ -1091,7 +1178,7 @@ export default function WalletsPage() {
       {/* Transfer Funds Modal */}
       {showTransferModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <h2 className="text-base font-bold text-foreground">Transfer Antar-Dompet</h2>
             <form onSubmit={handleTransfer} className="space-y-4">
               <div>
@@ -1174,7 +1261,7 @@ export default function WalletsPage() {
       {/* Manage Members (Sharing) Modal */}
       {managingMembersWallet && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-5 text-xs max-h-[90dvh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-base font-bold text-foreground flex items-center gap-2">
@@ -1298,7 +1385,7 @@ export default function WalletsPage() {
       {/* Password-Protected Reset Wallet Balance Modal */}
       {showResetModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <div className="flex items-center gap-2.5 text-rose-600 dark:text-rose-400">
               <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center shrink-0">
                 <RotateCcw className="w-4 h-4" />
@@ -1410,20 +1497,22 @@ export default function WalletsPage() {
             <div className="p-5 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-violet-500/10 text-violet-500 flex items-center justify-center font-bold">
-                  ⚙️
+                  <SlidersHorizontal className="w-4 h-4" />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-foreground">Pilih Model Strategi Portofolio</h3>
                   <p className="text-xs text-muted-foreground">
-                    Atur target alokasi acuan untuk rebalancing &amp; review kesehatan portofolio Anda.
+                    Atur target alokasi acuan untuk rebalancing dan review portofolio.
                   </p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setShowStrategyModal(false)}
-                className="p-2 rounded-xl hover:bg-secondary text-muted-foreground"
+                aria-label="Tutup modal strategi"
+                className="p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -1500,7 +1589,7 @@ export default function WalletsPage() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     {[
                       { key: "INDEX_ETF", label: "Indeks & ETF" },
                       { key: "EQUITY", label: "Saham & Ekuitas" },
@@ -1556,6 +1645,26 @@ export default function WalletsPage() {
           </div>
         </div>
       )}
+      <ConfirmModal
+        open={Boolean(confirmState?.open)}
+        title={confirmState?.title || ""}
+        description={confirmState?.description || ""}
+        confirmLabel={confirmState?.confirmLabel || "Ya, Lanjutkan"}
+        loading={confirmLoading}
+        onCancel={() => {
+          if (!confirmLoading) setConfirmState(null);
+        }}
+        onConfirm={async () => {
+          if (!confirmState) return;
+          setConfirmLoading(true);
+          try {
+            await confirmState.onConfirm();
+            setConfirmState(null);
+          } finally {
+            setConfirmLoading(false);
+          }
+        }}
+      />
     </div>
   );
 }

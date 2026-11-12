@@ -246,22 +246,22 @@ export default function TransactionsPage() {
       )}
 
       {/* Filter Bar */}
-      <div className="p-4 rounded-3xl bg-card border border-border shadow-sm flex flex-wrap items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
+      <div className="p-4 rounded-3xl bg-card border border-border shadow-sm flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 flex-1 w-full sm:w-auto sm:min-w-[260px]">
           {/* Month Picker */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-secondary border border-border text-xs">
-            <Calendar className="w-3.5 h-3.5 text-[#8a6300] dark:text-[#f0b000]" />
+          <div className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-xl bg-secondary border border-border text-xs w-full sm:w-auto">
+            <Calendar className="w-3.5 h-3.5 text-[#8a6300] dark:text-[#f0b000] shrink-0" />
             <input
               type="month"
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(e.target.value)}
-              className="bg-transparent text-foreground font-semibold focus:outline-none"
+              className="bg-transparent text-foreground font-semibold focus:outline-none flex-1 min-w-0"
             />
             {selectedMonth && (
               <button
                 type="button"
                 onClick={() => setSelectedMonth("")}
-                className="text-[10px] text-muted-foreground hover:text-foreground ml-1 underline"
+                className="text-xs text-muted-foreground hover:text-foreground ml-1 underline shrink-0"
               >
                 Semua
               </button>
@@ -269,7 +269,7 @@ export default function TransactionsPage() {
           </div>
 
           {/* Search */}
-          <div className="relative flex-1 min-w-[200px]">
+          <div className="relative flex-1 w-full sm:w-auto min-w-[160px]">
             <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -338,9 +338,94 @@ export default function TransactionsPage() {
         </button>
       </div>
 
-      {/* Transactions Table */}
+      {/* Transactions List (Mobile Cards + Desktop Table) */}
       <div className="rounded-3xl bg-card border border-border overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
+        {/* Mobile Card View */}
+        <div className="md:hidden divide-y divide-border">
+          {transactions.length === 0 ? (
+            <div className="py-12 px-4 text-center text-xs text-muted-foreground">
+              Belum ada transaksi yang sesuai dengan filter.
+            </div>
+          ) : (
+            transactions.map((tx) => (
+              <div key={tx.id} className="p-4 space-y-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div
+                      className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold shrink-0 ${
+                        tx.type === "EXPENSE"
+                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                          : tx.type === "INCOME"
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                          : "bg-accent text-[#8a6300] dark:text-[#f0b000] border-[#f0b000]/30"
+                      }`}
+                    >
+                      {tx.type === "EXPENSE" ? (
+                        <ArrowDownLeft className="w-4 h-4" />
+                      ) : tx.type === "TRANSFER" ? (
+                        <ArrowLeftRight className="w-4 h-4" />
+                      ) : (
+                        <ArrowUpRight className="w-4 h-4" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-semibold text-sm text-foreground break-words">{tx.description}</div>
+                      {tx.merchant && (
+                        <div className="text-xs text-muted-foreground">Toko: {tx.merchant}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div
+                      className={`font-bold font-mono text-sm ${
+                        tx.type === "EXPENSE"
+                          ? "text-rose-600 dark:text-rose-400"
+                          : tx.type === "INCOME"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-foreground"
+                      }`}
+                    >
+                      {tx.type === "EXPENSE" ? "-" : tx.type === "INCOME" ? "+" : ""}
+                      {formatCurrency(tx.amount, tx.currency)}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">{formatDate(tx.transaction_date)}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary border border-border text-foreground font-medium">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: tx.wallet?.color || "#f0b000" }}
+                      />
+                      <span>
+                        {tx.to_wallet ? `${tx.wallet?.name || "Asal"} → ${tx.to_wallet.name}` : tx.wallet?.name || "Dompet"}
+                      </span>
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-accent/60 border border-[#f0b000]/25 text-[#8a6300] dark:text-[#f0b000] font-medium">
+                      {tx.budget?.name || tx.category?.name || (tx.type === "TRANSFER" ? "Transfer" : "Lain-lain")}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-secondary text-muted-foreground border border-border text-[11px]">
+                      {tx.raw_source}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(tx.id)}
+                    aria-label={`Hapus transaksi ${tx.description}`}
+                    className="p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-secondary transition-colors shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Desktop Table View */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-secondary/70 text-muted-foreground uppercase font-bold border-b border-border">
               <tr>
@@ -466,7 +551,7 @@ export default function TransactionsPage() {
       {/* Add Transaction Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90dvh] overflow-y-auto">
             <h2 className="text-lg font-bold text-foreground">Catat Transaksi Baru</h2>
             <form onSubmit={handleCreateTx} className="space-y-4 text-xs">
               {/* Type Switcher */}
@@ -601,7 +686,7 @@ export default function TransactionsPage() {
       {/* Quick Custom Category Modal */}
       {showCustomCatModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <h2 className="text-base font-bold text-foreground">Tambah Kategori Custom</h2>
             <form onSubmit={handleCreateCustomCategory} className="space-y-3">
               <div>

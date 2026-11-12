@@ -1126,12 +1126,12 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Tambah / Edit Pos Anggaran */}
       {showItemModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+          <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90dvh] overflow-y-auto">
             <h2 className="text-lg font-bold text-foreground">
               {editingItem ? "Edit Pos Anggaran" : "Tambah Pos Anggaran Baru"}
             </h2>
             <form onSubmit={handleSaveItem} className="space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="font-semibold text-foreground">Grup TYPE</label>
@@ -1189,7 +1189,7 @@ export default function BudgetsAllocationPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-semibold text-foreground block mb-1">Nominal Budget (Rp)</label>
                   <input
@@ -1300,7 +1300,7 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Asisten Distribusi Gajian */}
       {showPaydayModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-[#8a6300] dark:text-[#f0b000]" />
               <h2 className="text-base font-bold text-foreground">
@@ -1329,7 +1329,7 @@ export default function BudgetsAllocationPage() {
 
               <div>
                 <label className="font-semibold text-foreground block mb-1">Mode Perhitungan Transfer</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setPaydayMode("SHORTFALL")}
@@ -1408,7 +1408,7 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Ubah Penghasilan Acuan */}
       {showIncomeModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <h2 className="text-base font-bold text-foreground">Atur Penghasilan Acuan</h2>
             <p className="text-muted-foreground">
               Nominal ini digunakan sebagai dasar pembagian persentase per grup (Living Needs %, Life Style %, dll).
@@ -1576,7 +1576,7 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Tambah Grup TYPE (Dedicated Popup dari Dropdown) */}
       {showAddGroupModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <h2 className="text-base font-bold text-foreground">Tambah Grup TYPE Baru</h2>
             <form onSubmit={handleCreateGroup} className="space-y-4">
               <div>
@@ -1633,7 +1633,7 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Edit Grup TYPE */}
       {editingGroup && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <h2 className="text-base font-bold text-foreground">Edit Grup TYPE</h2>
             <form onSubmit={handleUpdateGroup} className="space-y-4">
               <div>
@@ -1688,7 +1688,7 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Hapus Grup TYPE (Proteksi & Reassign Opsi) */}
       {deletingGroup && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <div className="flex items-center gap-2 text-rose-500">
               <AlertCircle className="w-5 h-5" />
               <h2 className="text-base font-bold text-foreground">Hapus Grup TYPE: {deletingGroup.name}</h2>
@@ -1806,7 +1806,7 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Rename Group TYPE (Legacy Fallback) */}
       {showRenameGroupModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <h2 className="text-base font-bold text-foreground">Ubah Nama Grup TYPE</h2>
             <form onSubmit={handleRenameGroup} className="space-y-4">
               <div>
@@ -1842,7 +1842,7 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Aksi Cepat Baris (Bayar / Sisihkan / Pakai / Transfer Pos) */}
       {recordActionModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <h2 className="text-base font-bold text-foreground flex items-center gap-1.5">
               {recordActionModal.mode === "TRANSFER_ALLOCATION" && <ArrowLeftRight className="w-4 h-4 text-primary" />}
               {recordActionModal.mode === "TRANSFER_ALLOCATION"
@@ -1981,7 +1981,7 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Quick Create Category */}
       {showCustomCatModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <h2 className="text-base font-bold text-foreground">Buat Kategori Custom Baru</h2>
             <form onSubmit={handleCreateCustomCat} className="space-y-3">
               <div>
@@ -2018,7 +2018,7 @@ export default function BudgetsAllocationPage() {
       {/* Modal: Quick Create Wallet */}
       {showQuickWalletModal && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4 text-xs max-h-[90dvh] overflow-y-auto">
             <h2 className="text-base font-bold text-foreground">Tambah Dompet Baru Cepat</h2>
             <form onSubmit={handleCreateQuickWallet} className="space-y-3">
               <div>

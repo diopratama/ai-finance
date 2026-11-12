@@ -44,9 +44,12 @@ import {
 } from "@/lib/api";
 import { BotStatusMap, PersonalProfile, AccountBackupItem } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
+import { ConfirmModal } from "@/components/ConfirmModal";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<"account" | "financial" | "data">("account");
+  const [deleteBackupId, setDeleteBackupId] = useState<string | null>(null);
+  const [deletingBackup, setDeletingBackup] = useState(false);
 
   // Account state
   const [profile, setProfile] = useState<(AuthUser & { created_at: string }) | null>(null);
@@ -195,16 +198,20 @@ export default function SettingsPage() {
     }
   };
 
-  const handleDeleteBackup = async (backupId: string) => {
-    if (!confirm("Hapus snapshot backup ini dari penyimpanan Cloud?")) return;
+  const handleConfirmDeleteBackup = async () => {
+    if (!deleteBackupId) return;
+    setDeletingBackup(true);
     setDataMsg(null);
     try {
-      await deleteAccountBackup(backupId);
+      await deleteAccountBackup(deleteBackupId);
       const bList = await listAccountBackups();
       setBackups(bList.items);
       setDataMsg({ type: "success", text: "Snapshot backup berhasil dihapus." });
+      setDeleteBackupId(null);
     } catch (err: any) {
       setDataMsg({ type: "error", text: err.message || "Gagal menghapus backup." });
+    } finally {
+      setDeletingBackup(false);
     }
   };
 
@@ -507,13 +514,20 @@ export default function SettingsPage() {
                     </a>
                   </div>
                   <span
-                    className={`font-semibold ${
+                    className={`font-semibold inline-flex items-center gap-1 ${
                       botStatus?.TELEGRAM?.connected
                         ? "text-emerald-600 dark:text-emerald-400"
                         : "text-muted-foreground"
                     }`}
                   >
-                    {botStatus?.TELEGRAM?.connected ? "Terhubung ✅" : "Belum Terhubung"}
+                    {botStatus?.TELEGRAM?.connected ? (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Terhubung</span>
+                      </>
+                    ) : (
+                      "Belum Terhubung"
+                    )}
                   </span>
                 </div>
                 <div className="flex items-center justify-between p-2 rounded-lg bg-card border border-border gap-2">
@@ -1089,7 +1103,7 @@ export default function SettingsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDeleteBackup(b.id)}
+                          onClick={() => setDeleteBackupId(b.id)}
                           className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 transition-colors"
                           title="Hapus Snapshot"
                         >
@@ -1272,6 +1286,17 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+      <ConfirmModal
+        open={Boolean(deleteBackupId)}
+        title="Hapus Snapshot Backup?"
+        description="Snapshot backup ini akan dihapus permanen dari penyimpanan Cloud dan tidak dapat dikembalikan."
+        confirmLabel="Ya, Hapus Backup"
+        loading={deletingBackup}
+        onCancel={() => {
+          if (!deletingBackup) setDeleteBackupId(null);
+        }}
+        onConfirm={handleConfirmDeleteBackup}
+      />
     </div>
   );
 }
