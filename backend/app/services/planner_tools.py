@@ -170,9 +170,10 @@ def _format_single_analysis_entry(row: InvestmentAnalysisHistory) -> str:
         if row.created_at
         else "-"
     )
+    display_sym = "Screener Multi-Aset" if row.analysis_type == "recommend" else (row.symbol or "-")
     header = (
         f"• [run_id={row.run_id}] {dt_str} | Market={row.market} | Tipe={row.analysis_type} | "
-        f"Horizon={row.investment_horizon} | Simbol={row.symbol or 'Screener Multi-Aset'}"
+        f"Horizon={row.investment_horizon} | Simbol={display_sym}"
     )
 
     if row.analysis_type == "recommend":

@@ -1711,7 +1711,7 @@ def run_recommendation_pipeline(
         emit("agent_status", role="data_fetcher", status="completed")
         emit("agent_output", role="investment_advisor", output=msg)
         emit("agent_status", role="investment_advisor", status="completed")
-        return {
+        empty_result = {
             "type": "recommendation",
             "market": market,
             "report": msg,
@@ -1721,6 +1721,8 @@ def run_recommendation_pipeline(
             "status": "insufficient_data",
             "ranked_candidates": [],
         }
+        emit("completed", result=empty_result)
+        return empty_result
 
     symbols = [c["symbol"] for c in screened_results]
     log(f"Quality Screener memilih {len(symbols)} kandidat compounding teratas: {', '.join(symbols)}", role="data_fetcher")
@@ -1883,7 +1885,7 @@ def run_recommendation_pipeline(
     emit("agent_status", role="investment_advisor", status="completed")
     log("Scan peluang investasi berkualitas berhasil diselesaikan.", role="investment_advisor", status="completed")
 
-    return {
+    final_result = {
         "type": "recommendation",
         "market": market,
         "report": report_text,
@@ -1899,6 +1901,8 @@ def run_recommendation_pipeline(
         "macro_regime": macro_regime,
         "sharia_status": "ISSI_LISTED_IN_MANUAL_REFERENCE" if is_syar and all(c.get("issi_status") == "Ya" for c in screened_results) else "NOT_APPLICABLE",
     }
+    emit("completed", result=final_result)
+    return final_result
 
 
 def _resolve_chat_target_symbols(

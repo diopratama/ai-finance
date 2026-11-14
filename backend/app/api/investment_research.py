@@ -209,6 +209,25 @@ def chat_with_agent(
     return {"success": True, **ans}
 
 
+def _resolve_history_display_symbol(record: InvestmentAnalysisHistory) -> str:
+    """Returns a clean display symbol/label, fixing legacy recommend rows that stored stale single-asset inputs."""
+    if (record.analysis_type or "").lower() != "recommend":
+        return record.symbol or "-"
+    try:
+        parsed = json.loads(record.result_json or "{}")
+        ranked = parsed.get("ranked_candidates") or parsed.get("top_candidates") or []
+        top_syms = [
+            str(c.get("symbol")).strip()
+            for c in ranked[:3]
+            if isinstance(c, dict) and c.get("symbol")
+        ]
+        if top_syms:
+            return f"Scan: {', '.join(top_syms)}"
+    except Exception:
+        pass
+    return "Scan Peluang Pasar"
+
+
 @router.get("/history")
 def list_history(
     market: Optional[str] = None,
@@ -227,7 +246,7 @@ def list_history(
             "id": r.id,
             "run_id": r.run_id,
             "market": r.market,
-            "symbol": r.symbol,
+            "symbol": _resolve_history_display_symbol(r),
             "analysis_type": r.analysis_type,
             "investment_horizon": r.investment_horizon,
             "decision": r.decision,
@@ -359,6 +378,12 @@ def run_investment_swarm(
                     news_list = final_res.get("news_sources") or []
                     symbols_scanned = final_res.get("symbols_scanned", 1 if analysis_type == "analyze" else 0)
                     preview_text = final_res.get("report") if analysis_type == "recommend" else rec.get("executive_thesis", "")
+                    if analysis_type == "recommend":
+                        ranked = final_res.get("ranked_candidates") or []
+                        top_syms = [str(c.get("symbol")) for c in ranked[:2] if isinstance(c, dict) and c.get("symbol")]
+                        persisted_symbol = (f"SCAN: {', '.join(top_syms)}" if top_syms else "SCANNER")[:32]
+                    else:
+                        persisted_symbol = symbol[:32]
 
                     history_row = InvestmentAnalysisHistory(
                         id=str(uuid.uuid4()),
@@ -367,7 +392,7 @@ def run_investment_swarm(
                         market=market,
                         analysis_type=analysis_type,
                         investment_horizon=horizon,
-                        symbol=symbol,
+                        symbol=persisted_symbol,
                         status="completed",
                         decision=rec.get("stance", "HOLD") if analysis_type == "analyze" else None,
                         confidence=float(rec.get("confidence_pct", 0)) if rec.get("confidence_pct") is not None else None,

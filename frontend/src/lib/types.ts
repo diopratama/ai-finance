@@ -407,6 +407,7 @@ export interface InvestmentHistoryItem {
   run_id: string;
   market: string;
   symbol: string;
+  analysis_type?: string;
   investment_horizon: string;
   decision?: string;
   confidence?: number;

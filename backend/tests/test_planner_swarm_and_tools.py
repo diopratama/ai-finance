@@ -262,3 +262,38 @@ async def test_router_service_tool_calling_loop_and_fallback():
     assert any(isinstance(e, dict) and "AAPL" in e.get("status", "") for e in events)
     assert any(isinstance(e, dict) and "akumulasi bertahap" in e.get("chunk", "") for e in events)
 
+
+def test_recommend_history_display_symbol_and_completed_event():
+    import inspect
+    from app.api.investment_research import _resolve_history_display_symbol
+    from app.investment_ai import orchestrator
+
+    stale_row = InvestmentAnalysisHistory(
+        user_id="user_a",
+        run_id="r_old",
+        market="us_etf",
+        analysis_type="recommend",
+        symbol="TLKM",
+        status="completed",
+        result_json=json.dumps(
+            {"ranked_candidates": [{"symbol": "VOO"}, {"symbol": "QQQ"}, {"symbol": "SCHD"}]}
+        ),
+    )
+    assert _resolve_history_display_symbol(stale_row) == "Scan: VOO, QQQ, SCHD"
+
+    analyze_row = InvestmentAnalysisHistory(
+        user_id="user_a",
+        run_id="r_ana",
+        market="ihsg",
+        analysis_type="analyze",
+        symbol="BBCA.JK",
+        status="completed",
+        result_json="{}",
+    )
+    assert _resolve_history_display_symbol(analyze_row) == "BBCA.JK"
+
+    rec_src = inspect.getsource(orchestrator.run_recommendation_pipeline)
+    assert 'emit("completed", result=final_result)' in rec_src
+    assert 'emit("completed", result=empty_result)' in rec_src
+
+

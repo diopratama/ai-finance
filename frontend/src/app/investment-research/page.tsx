@@ -238,7 +238,9 @@ export default function InvestmentResearchPage() {
         setFinalResult(detail.result);
         setAnalystOutputs(detail.result.agent_reports || detail.result.analyst_reports || {});
         setSelectedMarket(detail.market);
-        if (detail.symbol) setSymbol(detail.symbol);
+        if (detail.analysis_type !== "recommend" && detail.symbol) {
+          setSymbol(detail.symbol);
+        }
         if (detail.analysis_type === "recommend" || detail.result.ranked_candidates) {
           setAnalysisType("recommend");
         } else {
@@ -305,7 +307,7 @@ export default function InvestmentResearchPage() {
         body: JSON.stringify({
           analysis_type: activeType,
           market: selectedMarket,
-          symbol: activeType === "recommend" ? (activeSymbol || "ALL") : activeSymbol,
+          symbol: activeType === "recommend" ? "ALL" : activeSymbol,
           horizon: horizonFilter,
           locale: "id",
         }),
@@ -321,47 +323,63 @@ export default function InvestmentResearchPage() {
       const decoder = new TextDecoder();
       let buffer = "";
 
+      const processSseBlock = (block: string) => {
+        const trimmed = block.trim();
+        if (!trimmed.startsWith("data:")) return;
+        const jsonStr = trimmed.slice(5).trim();
+        if (!jsonStr) return;
+
+        try {
+          const data = JSON.parse(jsonStr);
+
+          if (data.type === "task_init") {
+            setCurrentTaskId(data.task_id);
+          } else if (data.type === "log") {
+            setLiveLogs((prev) => [...prev, `[${data.level || "INFO"}] ${data.message}`]);
+          } else if (data.type === "agent_status") {
+            setAgentStatuses((prev) => ({
+              ...prev,
+              [data.role]: data.status,
+            }));
+          } else if (data.type === "agent_output") {
+            setAnalystOutputs((prev) => ({
+              ...prev,
+              [data.role]: data.output,
+            }));
+          } else if (data.type === "completed") {
+            setFinalResult(data.result);
+            if (data.result?.agent_reports || data.result?.analyst_reports) {
+              setAnalystOutputs(data.result.agent_reports || data.result.analyst_reports || {});
+            }
+            setActiveReportTab("investment_advisor");
+            setLiveLogs((prev) => [...prev, "✅ Seluruh riset multi-agent berhasil dirampungkan!"]);
+          } else if (data.type === "stopped") {
+            setLiveLogs((prev) => [...prev, "🛑 Analisis dihentikan sesuai instruksi pengguna."]);
+          } else if (data.type === "error") {
+            setErrorMsg(data.error);
+            setLiveLogs((prev) => [...prev, `❌ Error: ${data.error}`]);
+          }
+        } catch {}
+      };
+
       while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          buffer += decoder.decode();
+          if (buffer.trim()) {
+            for (const block of buffer.split(/\r?\n\r?\n/)) {
+              processSseBlock(block);
+            }
+          }
+          break;
+        }
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
+        const lines = buffer.split(/\r?\n\r?\n/);
         buffer = lines.pop() || "";
 
         for (const block of lines) {
-          const trimmed = block.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const jsonStr = trimmed.slice(5).trim();
-          if (!jsonStr) continue;
-
-          try {
-            const data = JSON.parse(jsonStr);
-
-            if (data.type === "task_init") {
-              setCurrentTaskId(data.task_id);
-            } else if (data.type === "log") {
-              setLiveLogs((prev) => [...prev, `[${data.level || "INFO"}] ${data.message}`]);
-            } else if (data.type === "agent_status") {
-              setAgentStatuses((prev) => ({
-                ...prev,
-                [data.role]: data.status,
-              }));
-            } else if (data.type === "agent_output") {
-              setAnalystOutputs((prev) => ({
-                ...prev,
-                [data.role]: data.output,
-              }));
-            } else if (data.type === "completed") {
-              setFinalResult(data.result);
-              setLiveLogs((prev) => [...prev, "✅ Seluruh riset multi-agent berhasil dirampungkan!"]);
-            } else if (data.type === "stopped") {
-              setLiveLogs((prev) => [...prev, "🛑 Analisis dihentikan sesuai instruksi pengguna."]);
-            } else if (data.type === "error") {
-              setErrorMsg(data.error);
-              setLiveLogs((prev) => [...prev, `❌ Error: ${data.error}`]);
-            }
-          } catch {}
+          processSseBlock(block);
         }
       }
     } catch (err: any) {
@@ -2027,7 +2045,12 @@ export default function InvestmentResearchPage() {
                     className="p-3.5 rounded-2xl bg-secondary/40 hover:bg-secondary border border-border flex items-center justify-between text-xs cursor-pointer transition group"
                   >
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {h.analysis_type === "recommend" && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30">
+                            Scan Peluang
+                          </span>
+                        )}
                         <span className="font-mono font-bold text-foreground group-hover:text-[#f0b000] transition">
                           {h.symbol}
                         </span>
