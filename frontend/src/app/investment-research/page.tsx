@@ -600,6 +600,13 @@ export default function InvestmentResearchPage() {
               <button
                 key={m.id}
                 onClick={() => {
+                  if (m.id !== selectedMarket) {
+                    setFinalResult(null);
+                    setAnalystOutputs({});
+                    setChatMessages([]);
+                    setErrorMsg(null);
+                    setLiveLogs([]);
+                  }
                   setSelectedMarket(m.id);
                   if (analysisType === "analyze") {
                     setSymbol(m.defaultTicker);

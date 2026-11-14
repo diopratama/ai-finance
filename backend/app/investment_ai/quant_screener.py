@@ -90,7 +90,11 @@ TOKENIZED_EQUITY_CRYPTO_SYMBOLS = {"SKHYB", "MUB", "SNDKB"}
 MIN_US_DOLLAR_VOLUME = 5_000_000.0
 
 LEVERAGED_CRYPTO_PATTERNS = ["UPUSDT", "DOWNUSDT", "BEARUSDT", "BULLUSDT", "2LUSDT", "2SUSDT", "3LUSDT", "3SUSDT"]
-EXCLUDED_US_ETFS = {"SOXL", "SOXS", "SQQQ", "TQQQ", "UVXY", "SPXU", "UPRO", "BOIL", "KOLD", "NUGT", "DUST", "YINN", "YANG"}
+EXCLUDED_US_ETFS = {
+    "SOXL", "SOXS", "SQQQ", "TQQQ", "UVXY", "SPXU", "UPRO", "BOIL", "KOLD",
+    "NUGT", "DUST", "YINN", "YANG", "SPCX", "SPXL", "SPXS", "LABU", "LABD",
+    "ARKK", "ARKG", "JEPI", "JEPQ",
+}
 
 
 def fetch_live_crypto_universe(limit: int = 30) -> List[str]:
@@ -156,7 +160,12 @@ def fetch_live_us_universe(limit: int = 30) -> List[str]:
                 quotes = data.get("finance", {}).get("result", [{}])[0].get("quotes", [])
                 for q in quotes:
                     sym = q.get("symbol")
-                    if not sym or any(sym in values for values in lists_by_screen.values()) or sym in EXCLUDED_US_ETFS:
+                    if (
+                        not sym
+                        or any(sym in values for values in lists_by_screen.values())
+                        or sym in EXCLUDED_US_ETFS
+                        or sym in US_ETF_UNIVERSE
+                    ):
                         continue
                     if any(ch in sym for ch in ["^", "=", "+", ".", "/"]):
                         continue
