@@ -88,7 +88,8 @@ def test_fetch_comprehensive_market_data_indicators():
     stats = tf_1d["stats"]
     assert "rsi" in stats
     assert "macd" in stats
-    assert "atr14" in stats or "suggested_levels" in stats
+    assert "investment_zones" in stats
+    assert "1H" not in data["timeframes"]
 
     # Confidence calibration
     close_price = tf_1d.get("price") or 3000.0
@@ -146,9 +147,9 @@ def test_chat_deep_validation_mode():
 
         # Deep validation audit mode (triggers live re-fetch, discrepancy flags, and auditor verdict)
         deep_res = chat_with_investment_agent(
-            history=[{"role": "user", "content": "Audit divergensi 1D vs 1H"}],
+            history=[{"role": "user", "content": "Audit divergensi 1D vs 1W"}],
             analysis_context=ctx,
-            user_message="Audit divergensi 1D vs 1H",
+            user_message="Audit divergensi 1D vs 1W",
             mode="deep_validation",
         )
         assert "reply" in deep_res
@@ -161,4 +162,4 @@ def test_chat_deep_validation_mode():
         snap = meta["live_snapshots"][0]
         assert snap.get("symbol") == "TLKM"
         assert "rsi_1d" in snap
-        assert "rsi_1h" in snap
+        assert "rsi_1w" in snap

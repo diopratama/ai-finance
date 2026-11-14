@@ -24,7 +24,8 @@ Pemetaan Tesis Multi-Horizon:
 
 💡 Strategi Akumulasi & Alokasi Portofolio:
 - Batas alokasi maksimum portofolio (% porsi ideal agar terhindar dari risiko konsentrasi).
-- Strategi cicil berkala (Dollar-Cost Averaging) dan level referensi target bertahap TP1-TP3 (berbasis volatilitas ATR backend).
+- Strategi cicil berkala (Dollar-Cost Averaging) menggunakan 3 Zona Harga Investasi backend: Zona Akumulasi / DCA Ideal (berbasis Support Major / SMA 200), Target Nilai Wajar 1-3 Tahun (DCF / Valuasi), dan Kondisi Invalidasi Tesis Fundamental.
+- Integrasikan konteks makroekonomi (USD/IDR, US10Y, Emas) serta peringatan konsentrasi dompet pengguna.
 
 ⚠️ Risiko Fundamental & Peringatan Makro:
 - Risiko beban utang, fluktuasi kurs, persaingan industri, atau sentimen pasar faktual.

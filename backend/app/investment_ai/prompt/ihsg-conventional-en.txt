@@ -24,7 +24,8 @@ Multi-Horizon Thesis Mapping:
 
 💡 Accumulation & Portfolio Sizing:
 - Recommended maximum portfolio allocation % to prevent concentration risk.
-- Systematic Dollar-Cost Averaging (DCA) strategy with ATR-derived benchmark levels TP1-TP3.
+- Systematic Dollar-Cost Averaging (DCA) grounded in the 3 Investment Price Zones: Ideal Accumulation Zone (Major Support / SMA 200), 1-3Y Fair Value Target (DCF / Multiples), and Fundamental Thesis Invalidation Triggers.
+- Incorporate macroeconomic regime context (USD/IDR, US10Y, Gold) and user portfolio concentration limits.
 
 ⚠️ Fundamental Risks & Macro Headwinds:
 - Balance sheet leverage, interest rate sensitivity, industry headwinds, and factual news risks.

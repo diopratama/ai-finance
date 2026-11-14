@@ -39,6 +39,10 @@ services:
       - LLM_API_KEY=${LLM_API_KEY:-placeholder_key}
       - LLM_MODEL_NAME=${LLM_MODEL_NAME:-gpt-4o}
       - LLM_TIMEOUT=60.0
+      # External Market & Research APIs
+      - EXA_API_KEY=${EXA_API_KEY:-}
+      - FMP_API_KEY=${FMP_API_KEY:-}
+      - TWELVE_DATA_API_KEY=${TWELVE_DATA_API_KEY:-}
       # Bot Webhooks
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - WHATSAPP_TOKEN=${WHATSAPP_TOKEN:-}

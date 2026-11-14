@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yfinance as yf
 
+from app.config import settings
 from app.investment_ai.cache_store import redis_get_json, redis_set_json, shared_cache_get, shared_cache_set
 
 logger = logging.getLogger(__name__)
@@ -36,22 +37,21 @@ except Exception as _tz_err:
     logger.debug("Could not set custom yfinance tz cache location: %s", _tz_err)
 
 # Timeframe -> (yfinance interval, yfinance period, optional resample rule).
+# Long-term wealth compounding focuses on Daily (1D), Weekly (1W), and Monthly (1M) cycles.
 TIMEFRAME_CONFIG = {
-    "15M": {"interval": "15m", "period": "5d", "resample": None},
-    "1H": {"interval": "1h", "period": "5d", "resample": None},
-    "4H": {"interval": "1h", "period": "1mo", "resample": "4h"},
-    "1D": {"interval": "1d", "period": "3mo", "resample": None},
+    "1D": {"interval": "1d", "period": "1y", "resample": None},
+    "1W": {"interval": "1wk", "period": "5y", "resample": None},
+    "1M": {"interval": "1mo", "period": "10y", "resample": None},
 }
 
 # CoinGecko fallback: timeframe -> days of history.
 COINGECKO_DAYS = {
-    "15M": 1,
-    "1H": 7,
-    "4H": 30,
-    "1D": 30,
+    "1D": 90,
+    "1W": 365,
+    "1M": 365,
 }
 
-MAX_CANDLES = 60
+MAX_CANDLES = 260
 
 # Primary-source retry settings for get_market_quote.
 PRIMARY_RETRIES = 2
@@ -301,35 +301,142 @@ def compute_support_resistance(
     )
 
 
-def calculate_atr_levels(price: float, atr: float) -> Dict[str, Any]:
-    """Returns a deterministic TP ladder: 1R, 2R, and 3R with a 1.5 ATR stop."""
-    if not math.isfinite(price) or not math.isfinite(atr) or price <= 0 or atr <= 0:
+def calculate_investment_zones(
+    price: float,
+    stats: Dict[str, Any],
+    long_term_metrics: Optional[Dict[str, Any]] = None,
+    fundamental_data: Optional[Dict[str, Any]] = None,
+    market: str = "ihsg",
+) -> Dict[str, Any]:
+    """Computes the 3 long-term Investment Price Zones (replacing ATR SL & R-multiples):
+
+    1. accumulation_zone: Buy-on-Dip / DCA Ideal zone near major support & SMA 50/200.
+    2. fair_value_target: 1-3Y Fundamental Fair Value (DCF/Graham) & Margin of Safety.
+    3. thesis_invalidation: Fundamental structural invalidation triggers (not daily volatility).
+    """
+    if not math.isfinite(price) or price <= 0:
         return {}
-    entry = _round_significant(price)
-    risk_unit = _round_significant(1.5 * atr)
-    buy_sl = _round_significant(entry - risk_unit)
-    if buy_sl <= 0:
-        return {}
-    targets = [
-        {
-            "label": f"TP{multiple}",
-            "price": _round_significant(entry + multiple * risk_unit),
-            "r_multiple": float(multiple),
-            "move_pct": _round_significant((multiple * risk_unit) / entry * 100, 6),
-        }
-        for multiple in (1, 2, 3)
+
+    lt = long_term_metrics or {}
+    fund = fundamental_data or {}
+    norm = _normalize_market(market)
+    is_syariah = "syariah" in (market or "").lower()
+
+    # 1. Zona Akumulasi / DCA Ideal (Buy on Dip Zone)
+    anchors = [
+        _safe_float(stats.get("support")),
+        _safe_float(lt.get("sma200_day")) or _safe_float(stats.get("sma200")),
+        _safe_float(lt.get("sma50_day")) or _safe_float(stats.get("sma50")),
+        _safe_float(lt.get("sma200_week")),
     ]
+    valid_anchors = sorted(a for a in anchors if a is not None and 0.4 * price <= a <= 1.05 * price)
+    if len(valid_anchors) >= 2:
+        ideal_low = _round_significant(min(valid_anchors[0], price * 0.94))
+        ideal_high = _round_significant(min(valid_anchors[-1], price * 1.02))
+    elif len(valid_anchors) == 1:
+        anchor = valid_anchors[0]
+        ideal_low = _round_significant(anchor * 0.96)
+        ideal_high = _round_significant(min(max(anchor * 1.02, anchor), price * 1.02))
+    else:
+        ideal_low = _round_significant(price * 0.88)
+        ideal_high = _round_significant(price * 0.96)
+
+    if ideal_low > ideal_high:
+        ideal_low, ideal_high = ideal_high, ideal_low
+
+    cycle_pos = lt.get("cycle_position") or "NEUTRAL_CONSOLIDATION"
+    rsi_val = _safe_float(stats.get("rsi"))
+    if price <= ideal_high * 1.01 and (rsi_val is None or rsi_val <= 65):
+        dca_guidance = (
+            "Harga berada di Zona Akumulasi Ideal / Buy on Dip; sesuai untuk akumulasi bertahap (DCA) "
+            "atau entry terukur."
+        )
+        dca_status = "IN_ACCUMULATION_ZONE"
+    elif cycle_pos == "OVEREXTENDED_WAIT_DIP" or (rsi_val is not None and rsi_val > 70):
+        dca_guidance = (
+            "Harga sedang overextended jauh di atas rata-rata historis; utamakan cicil DCA nominal kecil "
+            "dan tahan alokasi ekstra hingga pullback menuju Zona Akumulasi."
+        )
+        dca_status = "OVEREXTENDED_WAIT_DIP"
+    else:
+        dca_guidance = (
+            "Harga dalam fase konsolidasi wajar; jalankan DCA rutin sesuai jadwal bulanan dan manfaatkan "
+            "koreksi menuju area SMA 50/200 untuk top-up."
+        )
+        dca_status = "NEUTRAL_DCA"
+
+    # 2. Target Nilai Wajar 1-3 Tahun (Fair Value Target & Margin of Safety)
+    dcf_fair = _safe_float(fund.get("dcf_fair_value"))
+    graham = _safe_float(fund.get("graham_number"))
+    mos_pct = _safe_float(fund.get("margin_of_safety_pct"))
+    val_status = fund.get("valuation_signal") or "UNAVAILABLE"
+    fair_source = fund.get("fair_value_source")
+
+    if dcf_fair is not None and dcf_fair > 0:
+        fv_price = _round_significant(dcf_fair)
+        if mos_pct is None:
+            mos_pct = round(((fv_price - price) / fv_price) * 100.0, 2)
+        if not val_status or val_status == "UNAVAILABLE":
+            val_status = "UNDERVALUED" if mos_pct >= 15 else ("FAIR" if mos_pct >= -15 else "OVERVALUED")
+        target_1y_3y_high = _round_significant(max(fv_price, price * 1.15))
+    elif graham is not None and graham > 0:
+        fv_price = _round_significant(graham)
+        mos_pct = round(((fv_price - price) / fv_price) * 100.0, 2)
+        val_status = "UNDERVALUED" if mos_pct >= 15 else ("FAIR" if mos_pct >= -15 else "OVERVALUED")
+        fair_source = "Graham Intrinsic Value"
+        target_1y_3y_high = _round_significant(max(fv_price, price * 1.15))
+    else:
+        # Fallback for ETF / Crypto or equities without DCF: 1-3Y CAGR projection band (conservatively clamped)
+        hist_cagr = _safe_float(lt.get("cagr_3y_pct")) or _safe_float(lt.get("cagr_1y_pct"))
+        annual_est = min(0.18, max(0.08, (hist_cagr / 100.0) if hist_cagr is not None else 0.10))
+        fv_price = _round_significant(price * ((1.0 + annual_est) ** 2))
+        target_1y_3y_high = _round_significant(price * ((1.0 + annual_est) ** 3))
+        mos_pct = None
+        val_status = "CAGR_PROJECTION"
+        fair_source = "1-3Y Historical CAGR Band (Bukan DCF)"
+
+    # 3. Kondisi Invalidasi Tesis (Fundamental Exit Trigger - bukan stop loss harian)
+    invalidation_triggers: List[str] = []
+    if is_syariah:
+        invalidation_triggers.append("Saham dikeluarkan dari daftar efek syariah (ISSI / DES OJK).")
+        invalidation_triggers.append("Rasio utang berbunga / total aset menembus > 45% atau pendapatan non-halal > 10%.")
+    if norm in {"ihsg", "us_stock"}:
+        invalidation_triggers.extend([
+            "Piotroski F-Score turun ke < 4/9 atau Altman Z-Score masuk zona distress (< 1.8).",
+            "Kontraksi struktural pendapatan & laba bersih > 2 kuartal beruntun disertai arus kas bebas (FCF) negatif berkepanjangan.",
+            "Kenaikan Debt-to-Equity drastis dengan Interest Coverage < 1.5x.",
+        ])
+    elif norm == "us_etf":
+        invalidation_triggers.extend([
+            "Perubahan mandat indeks acuan atau kenaikan tajam Expense Ratio dibanding peer.",
+            "Penurunan drastis likuiditas atau penyusutan AUM yang mengganggu tracking error.",
+        ])
+    elif norm == "crypto":
+        invalidation_triggers.extend([
+            "Penurunan struktural TVL & Protocol Revenue > 50% secara berkelanjutan (bukan sekadar fluktuasi harga).",
+            "Risiko dilusi ekstrem akibat jadwal token unlock besar tanpa pertumbuhan adopsi pengguna nyata.",
+            "Kerusakan fundamental jaringan (insiden keamanan/eksploitasi fatal atau pelarangan regulasi inti).",
+        ])
+
     return {
-        "reference_price": entry,
-        "atr14": _round_significant(atr),
-        "risk_unit": risk_unit,
-        "buy_sl": buy_sl,
-        "buy_sl_pct": _round_significant((buy_sl - entry) / entry * 100, 6),
-        "take_profit_targets": targets,
-        # Backward compatibility: the legacy single target maps to TP2 (2R).
-        "buy_tp": targets[1]["price"],
-        "buy_tp_pct": targets[1]["move_pct"],
-        "risk_reward": 2.0,
+        "reference_price": _round_significant(price),
+        "accumulation_zone": {
+            "ideal_low": ideal_low,
+            "ideal_high": ideal_high,
+            "status": dca_status,
+            "guidance": dca_guidance,
+        },
+        "fair_value_target": {
+            "fair_value": fv_price,
+            "horizon_3y_upper": target_1y_3y_high,
+            "margin_of_safety_pct": mos_pct,
+            "valuation_status": val_status,
+            "source": fair_source or "Valuation Estimate",
+        },
+        "thesis_invalidation": {
+            "summary": " ".join(invalidation_triggers[:2]),
+            "triggers": invalidation_triggers,
+        },
     }
 
 
@@ -342,12 +449,15 @@ def compute_indicators(
     ind: Dict[str, Any] = {}
     sma20 = _sma(closes, 20)
     sma50 = _sma(closes, 50)
+    sma200 = _sma(closes, 200)
     rsi = _rsi(closes, 14)
     macd = _macd(closes)
     if sma20 is not None:
         ind["sma20"] = _round_significant(sma20)
     if sma50 is not None:
         ind["sma50"] = _round_significant(sma50)
+    if sma200 is not None:
+        ind["sma200"] = _round_significant(sma200)
     if rsi is not None:
         ind["rsi"] = round(rsi, 1)
     if macd is not None:
@@ -360,7 +470,8 @@ def compute_indicators(
 
     if candles:
         atr = compute_atr(candles, 14)
-        sup, res = compute_support_resistance(candles, 20)
+        lookback = min(len(candles), 50) if len(candles) >= 20 else len(candles)
+        sup, res = compute_support_resistance(candles, lookback) if lookback >= 5 else (None, None)
         if atr is not None:
             ind["atr14"] = _round_significant(atr)
         if sup is not None:
@@ -368,10 +479,10 @@ def compute_indicators(
         if res is not None:
             ind["resistance"] = res
 
-        if closes and atr is not None and atr > 0:
-            levels = calculate_atr_levels(closes[-1], atr)
-            if levels:
-                ind["suggested_levels"] = levels
+        if closes:
+            zones = calculate_investment_zones(closes[-1], ind)
+            if zones:
+                ind["investment_zones"] = zones
 
     return ind
 
@@ -593,7 +704,7 @@ def _fetch_yahoo_batch(
     missing_symbols: List[str] = []
 
     for sym in unique_symbols:
-        hit, cached_entry = shared_cache_get(f"yf_batch_1d:{sym}")
+        hit, cached_entry = shared_cache_get(f"yf_batch_inv_1d:{sym}")
         if hit and isinstance(cached_entry, dict):
             result[sym] = cached_entry
             continue
@@ -609,7 +720,7 @@ def _fetch_yahoo_batch(
         with _yfinance_lock:
             df = yf.download(
                 tickers=missing_symbols,
-                period="3mo",
+                period="1y",
                 interval="1d",
                 group_by="ticker",
                 auto_adjust=False,
@@ -686,7 +797,7 @@ def _fetch_yahoo_batch(
             fresh_parsed[sym] = entry
             result[sym] = entry
             if cache_ttl > 0:
-                shared_cache_set(f"yf_batch_1d:{sym}", entry, cache_ttl)
+                shared_cache_set(f"yf_batch_inv_1d:{sym}", entry, cache_ttl)
         except Exception as e:
             logger.warning("Batch extract failed for %s: %s", sym, e)
 
@@ -932,7 +1043,7 @@ def _binance_spot_symbol(symbol: str) -> Optional[str]:
 
 
 def _binance_interval(timeframe: str) -> str:
-    return {"15M": "15m", "1H": "1h", "4H": "4h", "1D": "1d"}.get(timeframe, "1h")
+    return {"1D": "1d", "1W": "1w", "1M": "1M"}.get(timeframe, "1d")
 
 
 def _parse_binance_klines(rows: Any) -> List[Dict[str, Any]]:
@@ -1023,7 +1134,7 @@ def _fetch_binance_batch(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     def fetch_one(item: tuple[str, str]) -> tuple[str, Optional[Dict[str, Any]]]:
         display_symbol, pair = item
         try:
-            candles = _fetch_binance_klines(pair, "1d", limit=90)
+            candles = _fetch_binance_klines(pair, "1d", limit=220)
             ticker = ticker_by_pair[pair]
             price = _safe_float(ticker.get("lastPrice"))
             if price is None or len(candles) < 2:
@@ -1325,9 +1436,204 @@ _cache_lock = threading.Lock()
 CACHE_TTL = 20.0
 
 
-def get_market_quote(market: str, symbol: str, timeframe: str = "1H") -> Dict[str, Any]:
+def _twelvedata_symbol(market: str, symbol: str) -> Optional[str]:
+    """Formats symbol for Twelve Data API; returns None for unsupported markets like IDX."""
+    norm = _normalize_market(market)
+    s = symbol.strip().upper()
+    if norm == "crypto":
+        base = s.split("/")[0].split("-")[0]
+        return f"{base}/USD"
+    if norm == "ihsg" or s.endswith(".JK"):
+        return None  # Twelve Data free tier does not cover IDX
+    return s
+
+
+def _fetch_twelvedata_series(td_symbol: str, interval: str, outputsize: int) -> List[float]:
+    """Fetches chronological closes (oldest -> newest) from Twelve Data API."""
+    api_key = (getattr(settings, "TWELVE_DATA_API_KEY", "") or "").strip()
+    if not api_key or not td_symbol:
+        return []
+    params = urllib.parse.urlencode(
+        {
+            "symbol": td_symbol,
+            "interval": interval,
+            "outputsize": outputsize,
+            "apikey": api_key,
+            "order": "ASC",
+        }
+    )
+    try:
+        data = _http_get_json(f"https://api.twelvedata.com/time_series?{params}", timeout=10.0, max_retries=1)
+        if not isinstance(data, dict) or data.get("status") != "ok":
+            return []
+        values = data.get("values") or []
+        closes = [_safe_float(v.get("close")) for v in values]
+        return [c for c in closes if c is not None and c > 0]
+    except Exception as e:
+        logger.debug("Twelve Data time_series failed for %s (%s): %s", td_symbol, interval, e)
+        return []
+
+
+def _compute_max_drawdown_pct(closes: List[float]) -> Optional[float]:
+    """Computes maximum peak-to-trough percentage drawdown (negative pct, e.g. -25.4)."""
+    if len(closes) < 5:
+        return None
+    peak = closes[0]
+    max_dd = 0.0
+    for c in closes:
+        if c > peak:
+            peak = c
+        if peak > 0:
+            dd = (c - peak) / peak
+            if dd < max_dd:
+                max_dd = dd
+    return round(max_dd * 100.0, 2)
+
+
+def _compute_annualized_volatility_pct(closes: List[float], periods_per_year: int) -> Optional[float]:
+    """Computes annualized standard deviation of daily returns in percent."""
+    if len(closes) < 20:
+        return None
+    rets: List[float] = []
+    for i in range(1, len(closes)):
+        prev = closes[i - 1]
+        if prev > 0:
+            rets.append((closes[i] - prev) / prev)
+    if len(rets) < 15:
+        return None
+    mean_r = sum(rets) / len(rets)
+    var = sum((r - mean_r) ** 2 for r in rets) / (len(rets) - 1)
+    vol = math.sqrt(max(0.0, var)) * math.sqrt(periods_per_year) * 100.0
+    return round(vol, 2) if math.isfinite(vol) else None
+
+
+def _compute_period_cagr(closes: List[float], bars_back: int, years: float) -> Optional[float]:
+    """Computes annualized CAGR (%) across `bars_back` bars over `years` years."""
+    if len(closes) < 2 or years <= 0:
+        return None
+    idx = -min(len(closes), bars_back)
+    start_val = closes[idx]
+    end_val = closes[-1]
+    effective_years = years if len(closes) >= bars_back else years * (len(closes) / float(bars_back))
+    if start_val <= 0 or end_val <= 0 or effective_years < 0.7:
+        return None
+    cagr = ((end_val / start_val) ** (1.0 / effective_years) - 1.0) * 100.0
+    return round(cagr, 2) if math.isfinite(cagr) else None
+
+
+def fetch_long_term_market_metrics(market: str, symbol: str) -> Dict[str, Any]:
+    """Fetches multi-year historical data (Twelve Data primary, yfinance/Binance fallback)
+    to compute long-term investing metrics: 1Y/3Y/5Y CAGR, Max Drawdown, Annualized
+    Volatility, SMA 50-Day, SMA 200-Day, SMA 200-Week, and market cycle position.
+    """
+    norm = _normalize_market(market)
+    cache_key = f"lt_metrics:{norm}:{symbol.upper()}"
+    hit, cached = shared_cache_get(cache_key)
+    if hit and isinstance(cached, dict):
+        return cached
+
+    daily_closes: List[float] = []
+    weekly_closes: List[float] = []
+    provider = None
+
+    td_sym = _twelvedata_symbol(market, symbol)
+    if td_sym and (getattr(settings, "TWELVE_DATA_API_KEY", "") or "").strip():
+        daily_closes = _fetch_twelvedata_series(td_sym, "1day", 1280)
+        weekly_closes = _fetch_twelvedata_series(td_sym, "1week", 260)
+        if daily_closes or weekly_closes:
+            provider = "Twelve Data (Multi-Year)"
+
+    # Graceful fallback to Yahoo Finance (or Binance for crypto)
+    if len(daily_closes) < 200:
+        if norm == "crypto":
+            pair = _binance_spot_symbol(symbol)
+            if pair:
+                try:
+                    c_1d = _fetch_binance_klines(pair, "1d", limit=1000)
+                    c_1w = _fetch_binance_klines(pair, "1w", limit=260)
+                    if not daily_closes:
+                        daily_closes = [c["close"] for c in c_1d if c.get("close")]
+                    if not weekly_closes:
+                        weekly_closes = [c["close"] for c in c_1w if c.get("close")]
+                    if daily_closes:
+                        provider = "Binance Historical (Fallback)"
+                except Exception as e:
+                    logger.debug("Binance multi-year fallback failed for %s: %s", symbol, e)
+
+        if len(daily_closes) < 200:
+            ys = resolve_yahoo_symbol(market, symbol)
+            try:
+                t = yf.Ticker(ys)
+                if not daily_closes:
+                    hd = t.history(period="5y", interval="1d", auto_adjust=True)
+                    if hd is not None and not hd.empty and "Close" in hd:
+                        daily_closes = [float(x) for x in hd["Close"].dropna().tolist() if float(x) > 0]
+                if not weekly_closes:
+                    hw = t.history(period="5y", interval="1wk", auto_adjust=True)
+                    if hw is not None and not hw.empty and "Close" in hw:
+                        weekly_closes = [float(x) for x in hw["Close"].dropna().tolist() if float(x) > 0]
+                if daily_closes and not provider:
+                    provider = "Yahoo Finance 5Y History"
+            except Exception as e:
+                logger.warning("Yahoo multi-year fallback failed for %s: %s", symbol, e)
+
+    is_crypto = norm == "crypto"
+    trading_days_1y = 365 if is_crypto else 252
+    cagr_1y = _compute_period_cagr(daily_closes, trading_days_1y, 1.0)
+    cagr_3y = _compute_period_cagr(weekly_closes, 156, 3.0) or _compute_period_cagr(daily_closes, trading_days_1y * 3, 3.0)
+    cagr_5y = _compute_period_cagr(weekly_closes, 260, 5.0) or _compute_period_cagr(daily_closes, trading_days_1y * 5, 5.0)
+
+    max_dd = _compute_max_drawdown_pct(daily_closes or weekly_closes)
+    ann_vol = _compute_annualized_volatility_pct(daily_closes, trading_days_1y)
+
+    curr_p = daily_closes[-1] if daily_closes else (weekly_closes[-1] if weekly_closes else None)
+    sma50_d = _sma(daily_closes, 50)
+    sma200_d = _sma(daily_closes, 200)
+    sma200_w = _sma(weekly_closes, 200)
+
+    def _pct_diff(p: Optional[float], ref: Optional[float]) -> Optional[float]:
+        if p is None or ref is None or ref <= 0:
+            return None
+        return round(((p - ref) / ref) * 100.0, 2)
+
+    vs_sma50 = _pct_diff(curr_p, sma50_d)
+    vs_sma200 = _pct_diff(curr_p, sma200_d)
+    vs_sma200w = _pct_diff(curr_p, sma200_w)
+
+    rsi_1d = _rsi(daily_closes, 14) if len(daily_closes) >= 15 else None
+    cycle_position = "NEUTRAL_CONSOLIDATION"
+    if vs_sma200 is not None:
+        if vs_sma200 <= -5.0 or (vs_sma200w is not None and vs_sma200w <= 5.0) or (vs_sma200 <= 3.0 and rsi_1d is not None and rsi_1d <= 45):
+            cycle_position = "DEEP_VALUE_ACCUMULATION"
+        elif vs_sma200 >= 22.0 or (rsi_1d is not None and rsi_1d >= 72.0 and (vs_sma50 is not None and vs_sma50 >= 10.0)):
+            cycle_position = "OVEREXTENDED_WAIT_DIP"
+        elif -5.0 < vs_sma200 < 15.0:
+            cycle_position = "HEALTHY_DCA_ZONE"
+
+    payload = {
+        "available": bool(daily_closes or weekly_closes),
+        "provider": provider or "UNAVAILABLE",
+        "cagr_1y_pct": cagr_1y,
+        "cagr_3y_pct": cagr_3y,
+        "cagr_5y_pct": cagr_5y,
+        "max_drawdown_pct": max_dd,
+        "annualized_volatility_pct": ann_vol,
+        "sma50_day": _round_significant(sma50_d) if sma50_d is not None else None,
+        "sma200_day": _round_significant(sma200_d) if sma200_d is not None else None,
+        "sma200_week": _round_significant(sma200_w) if sma200_w is not None else None,
+        "price_vs_sma50_pct": vs_sma50,
+        "price_vs_sma200_pct": vs_sma200,
+        "price_vs_sma200w_pct": vs_sma200w,
+        "cycle_position": cycle_position,
+    }
+    if payload["available"]:
+        shared_cache_set(cache_key, payload, 1800.0)
+    return payload
+
+
+def get_market_quote(market: str, symbol: str, timeframe: str = "1D") -> Dict[str, Any]:
     """Fetches crypto quotes from Binance first and equity quotes from Yahoo Finance."""
-    tf = timeframe if timeframe in TIMEFRAME_CONFIG else "1H"
+    tf = timeframe if timeframe in TIMEFRAME_CONFIG else "1D"
     cfg = TIMEFRAME_CONFIG[tf]
     norm = _normalize_market(market)
     cache_key = f"{norm}:{symbol.upper()}:{tf}"
@@ -1381,7 +1687,7 @@ def get_market_quote(market: str, symbol: str, timeframe: str = "1H") -> Dict[st
             cg_id = resolve_coingecko_id(symbol)
             if cg_id:
                 try:
-                    result = _fetch_coingecko(cg_id, COINGECKO_DAYS[tf])
+                    result = _fetch_coingecko(cg_id, COINGECKO_DAYS.get(tf, 90))
                 except MarketDataError as cg_err:
                     logger.warning("CoinGecko fetch failed for %s: %s", symbol, cg_err)
         else:
@@ -1422,12 +1728,7 @@ def fetch_snapshot(
     on_error: Optional[Callable[[str, str], None]] = None,
     preferred_provider: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Fetches a compact price/change snapshot for a watchlist of symbols.
-
-    Uses a single batched ``yf.download`` call for efficiency, then falls back per
-    symbol (CoinGecko for crypto, Stooq for stocks). Returns one entry per symbol:
-    either ``{"symbol", "price", "change_pct", "provider"}`` or ``{"symbol", "error"}``.
-    """
+    """Fetches a compact price/change snapshot for a watchlist of symbols."""
     norm = _normalize_market(market)
     snapshot_captured_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     yahoo_symbols = [resolve_yahoo_symbol(market, s) for s in symbols]
@@ -1459,6 +1760,7 @@ def fetch_snapshot(
                     "volume": b.get("volume"),
                     "sma20": b.get("sma20"),
                     "sma50": b.get("sma50"),
+                    "sma200": b.get("sma200"),
                     "rsi": b.get("rsi"),
                     "macd": b.get("macd"),
                     "macd_line": b.get("macd_line"),
@@ -1467,7 +1769,7 @@ def fetch_snapshot(
                     "atr14": b.get("atr14"),
                     "support": b.get("support"),
                     "resistance": b.get("resistance"),
-                    "suggested_levels": b.get("suggested_levels"),
+                    "investment_zones": b.get("investment_zones"),
                 }
             )
             continue

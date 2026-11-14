@@ -147,6 +147,7 @@ export interface InvestmentRecommendation {
   market: string;
   stance: string;
   confidence_pct: number;
+  confidence_basis?: string;
   fundamental_quality_score: number;
   sharia_compliance?: {
     is_sharia: boolean;
@@ -157,6 +158,117 @@ export interface InvestmentRecommendation {
     fair_value_estimate: string;
     current_valuation_status: string;
     metric_rationale: string;
+  };
+  investment_price_zones?: {
+    reference_price?: number;
+    accumulation_zone?: {
+      ideal_low?: number;
+      ideal_high?: number;
+      status?: string;
+      guidance?: string;
+    };
+    fair_value_target?: {
+      fair_value?: number;
+      horizon_3y_upper?: number;
+      margin_of_safety_pct?: number;
+      valuation_status?: string;
+      source?: string;
+    };
+    thesis_invalidation?: {
+      summary?: string;
+      triggers?: string[];
+    };
+    accumulation_zone_summary?: string;
+    fair_value_target_summary?: string;
+    thesis_invalidation_trigger?: string;
+  };
+  institutional_metrics?: {
+    currency?: string;
+    current_price?: number;
+    dcf_fair_value?: number;
+    margin_of_safety_pct?: number;
+    valuation_signal?: string;
+    fair_value_source?: string;
+    piotroski_f_score?: number;
+    altman_z_score?: number;
+    roic_pct?: number;
+    roe_pct?: number;
+    interest_coverage?: number;
+    debt_to_equity?: number;
+    trailing_pe?: number;
+    price_to_book?: number;
+    dividend_yield_pct?: number;
+    dividend_5y_avg_pct?: number;
+    payout_ratio_pct?: number;
+    revenue_cagr_3y_pct?: number;
+    net_income_cagr_3y_pct?: number;
+    eps_cagr_3y_pct?: number;
+    fcf_cagr_3y_pct?: number;
+    cagr_1y_pct?: number;
+    cagr_3y_pct?: number;
+    cagr_5y_pct?: number;
+    max_drawdown_pct?: number;
+    annualized_volatility_pct?: number;
+    sma50_day?: number;
+    sma200_day?: number;
+    sma200_week?: number;
+    price_vs_sma50_pct?: number;
+    price_vs_sma200_pct?: number;
+    price_vs_sma200w_pct?: number;
+    cycle_position?: string;
+    historical_provider?: string;
+    fmp_used?: boolean;
+    mcap_to_fdv_ratio?: number;
+    supply_issued_pct?: number;
+    dilution_risk?: string;
+    defillama_tvl_usd?: number;
+    defillama_daily_fees_usd?: number;
+    defillama_daily_revenue_usd?: number;
+  };
+  compounding_simulation?: {
+    currency: "IDR" | "USD" | string;
+    current_price?: number;
+    default_lump_sum: number;
+    default_monthly_dca: number;
+    assumed_annual_cagr_pct: number;
+    assumed_dividend_yield_pct: number;
+    effective_total_return_pct: number;
+    cagr_basis?: string;
+    horizons: Array<{
+      years: number;
+      total_principal: number;
+      projected_value: number;
+      total_gain: number;
+      total_return_pct: number;
+      estimated_annual_dividend: number;
+      cumulative_dividends: number;
+    }>;
+  };
+  portfolio_concentration_analysis?: {
+    target_asset_class: string;
+    target_asset_class_label: string;
+    sector_or_category?: string;
+    total_investment_balance_idr: number;
+    current_class_allocation_pct: number;
+    target_class_allocation_pct: number;
+    drift_pct: number;
+    existing_symbol_exposure_idr: number;
+    matching_wallets?: string[];
+    concentration_status: string;
+    recommended_max_asset_pct: number;
+    warning_message: string;
+    proportional_allocation_advice: string;
+  };
+  macro_regime?: {
+    usd_idr_rate?: number;
+    gold_idr_per_gram?: number;
+    gold_usd_per_oz?: number;
+    us10y_yield_pct?: number;
+    dxy_index?: number;
+    interest_rate_regime: string;
+    regime_label: string;
+    regime_summary: string;
+    implication_for_asset: string;
   };
   multi_horizon_outlook?: {
     short_term?: MultiHorizonItem;
@@ -182,15 +294,48 @@ export interface RankedCandidate {
   price: number;
   change_pct?: number;
   score: number;
+  fundamental_score?: number;
+  cycle_score?: number;
   rsi?: number;
   macd?: number;
   sma20?: number;
   sma50?: number;
-  stance?: "BUY" | "ACCUMULATE" | "HOLD" | "TAKE_PROFIT" | "AVOID" | string;
+  sma200?: number;
+  stance?: "BUY" | "ACCUMULATE" | "HOLD" | "REDUCE" | "TAKE_PROFIT" | "AVOID" | string;
   confidence?: number;
   confidence_basis?: string;
   sharia_status?: string;
   issi_status?: string;
+  piotroski_f_score?: number;
+  altman_z_score?: number;
+  fair_value_estimate?: number;
+  margin_of_safety_pct?: number;
+  valuation_status?: string;
+  roic_pct?: number;
+  roe_pct?: number;
+  dividend_yield_pct?: number;
+  revenue_cagr_3y_pct?: number;
+  mcap_to_fdv_pct?: number;
+  cycle_position?: string;
+  accumulation_zone?: {
+    ideal_low?: number;
+    ideal_high?: number;
+    status?: string;
+    guidance?: string;
+  };
+  fair_value_target?: {
+    fair_value?: number;
+    horizon_3y_upper?: number;
+    margin_of_safety_pct?: number;
+    valuation_status?: string;
+    source?: string;
+  };
+  thesis_invalidation?: {
+    summary?: string;
+    triggers?: string[];
+  };
+  investment_zones?: Record<string, any>;
+  invalidation_trigger?: string;
   target_price_1?: number;
   target_price_2?: number;
   target_price_3?: number;
@@ -209,6 +354,7 @@ export interface RecommendationResult {
   exa_news_count: number;
   status: string;
   ranked_candidates: RankedCandidate[];
+  macro_regime?: Record<string, any>;
   sharia_status?: string;
 }
 
@@ -218,8 +364,11 @@ export interface ValidationLiveSnapshot {
   drift_pct?: number;
   rsi_1d?: number;
   macd_1d?: string;
+  rsi_1w?: number;
+  macd_1w?: string;
   rsi_1h?: number;
   macd_1h?: string;
+  cycle_position?: string;
   flags?: string[];
   provider?: string;
 }

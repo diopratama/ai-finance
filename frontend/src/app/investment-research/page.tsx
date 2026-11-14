@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   TrendingUp,
@@ -37,6 +37,10 @@ import {
   Gauge,
   Check,
   RefreshCw,
+  Calculator,
+  Wallet,
+  PieChart,
+  Landmark,
 } from "lucide-react";
 import {
   chatWithInvestmentAgent,
@@ -77,11 +81,20 @@ const QUICK_TICKERS: Record<string, string[]> = {
   us_etf: ["VOO", "QQQ", "VTI", "SCHD", "VT", "SPY"],
 };
 
+function formatAssetPrice(value: number | undefined | null, market?: string): string {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) return "-";
+  const num = Number(value);
+  if ((market || "").toLowerCase().includes("ihsg")) {
+    return formatCurrency(num, "IDR");
+  }
+  return `$${num.toLocaleString("en-US", { maximumFractionDigits: num >= 100 ? 2 : 4 })}`;
+}
+
 const QUICK_AUDIT_PROMPTS = [
-  { label: "🔍 Audit Divergensi 1D vs 1H", prompt: "Audit divergensi multi-timeframe 1D vs 1H dan apakah tren intraday masih selaras dengan tren makro?" },
-  { label: "⚠️ Cek Price Drift & Entry", prompt: "Cek price drift terkini dari rekomendasi awal dan apakah harga sekarang masih dalam area akumulasi yang aman?" },
-  { label: "🛡️ Validasi Level Support & Cutloss", prompt: "Konfirmasi validasi level support terkuat, level stop loss ketat, dan batas toleransi drawdown." },
-  { label: "📊 Uji Ulang Tesis vs Berita Live", prompt: "Uji ulang tesis investasi dengan katalis berita terbaru dan risiko volatilitas pasar saat ini." },
+  { label: "🔍 Audit Siklus 1D vs 1W", prompt: "Audit keselarasan siklus 1D vs 1W dan apakah posisi harga sekarang ideal untuk cicil DCA bertahap atau lump-sum?" },
+  { label: "🛒 Cek Price Drift & Zona Akumulasi", prompt: "Cek price drift terkini dari analisis awal dan apakah harga sekarang masih berada dalam Zona Akumulasi / DCA Ideal?" },
+  { label: "⚠️ Validasi Invalidasi Tesis", prompt: "Uji apakah terdapat indikasi kerusakan fundamental (Piotroski F-Score, arus kas, utang, atau dilusi token) yang mendekati Kondisi Invalidasi Tesis." },
+  { label: "📊 Uji Ulang Tesis vs Berita & Makro", prompt: "Uji ulang tesis investasi dengan katalis berita terbaru dan rezim makroekonomi saat ini." },
 ];
 
 interface ChatMessageItem {
@@ -123,6 +136,10 @@ export default function InvestmentResearchPage() {
   const [chatInput, setChatInput] = useState("");
   const [isChatSending, setIsChatSending] = useState(false);
   const [isDeepValidation, setIsDeepValidation] = useState(false);
+
+  // Interactive Dividend & DCA Compounding Calculator state
+  const [dcaLumpSumInput, setDcaLumpSumInput] = useState<string>("");
+  const [dcaMonthlyInput, setDcaMonthlyInput] = useState<string>("");
 
   // Sharia stocks browser modal
   const [showShariaModal, setShowShariaModal] = useState(false);
@@ -421,6 +438,66 @@ export default function InvestmentResearchPage() {
   const rec: InvestmentRecommendation | undefined = finalResult?.investment_recommendation;
   const isRecommendationResult = Boolean(finalResult?.ranked_candidates && finalResult.ranked_candidates.length > 0);
   const isSyariah = selectedMarket === "ihsg_syariah";
+
+  useEffect(() => {
+    if (rec?.compounding_simulation) {
+      setDcaLumpSumInput(String(rec.compounding_simulation.default_lump_sum ?? 0));
+      setDcaMonthlyInput(String(rec.compounding_simulation.default_monthly_dca ?? 0));
+    }
+  }, [
+    rec?.symbol,
+    rec?.compounding_simulation?.default_lump_sum,
+    rec?.compounding_simulation?.default_monthly_dca,
+  ]);
+
+  const compoundingCalc = useMemo(() => {
+    const sim = rec?.compounding_simulation;
+    if (!sim) return null;
+    const ccy = sim.currency || "IDR";
+    const lumpSum = Math.max(0, Number(dcaLumpSumInput) || 0);
+    const monthlyDca = Math.max(0, Number(dcaMonthlyInput) || 0);
+    const rPriceM = Math.pow(1 + (sim.assumed_annual_cagr_pct || 0) / 100, 1 / 12) - 1;
+    const rDivM = ((sim.assumed_dividend_yield_pct || 0) / 100) / 12;
+    let val = lumpSum;
+    let principal = lumpSum;
+    let cumDiv = 0;
+    const horizons: Array<{
+      years: number;
+      total_principal: number;
+      projected_value: number;
+      total_gain: number;
+      total_return_pct: number;
+      estimated_annual_dividend: number;
+      cumulative_dividends: number;
+    }> = [];
+    for (let m = 1; m <= 60; m++) {
+      const divM = val * rDivM;
+      val = val * (1 + rPriceM) + divM + monthlyDca;
+      principal += monthlyDca;
+      cumDiv += divM;
+      if (m === 12 || m === 36 || m === 60) {
+        const yrs = m / 12;
+        const gain = val - principal;
+        const retPct = principal > 0 ? (gain / principal) * 100 : 0;
+        const estAnnDiv = val * ((sim.assumed_dividend_yield_pct || 0) / 100);
+        horizons.push({
+          years: yrs,
+          total_principal: Math.round(principal),
+          projected_value: Math.round(val),
+          total_gain: Math.round(gain),
+          total_return_pct: Math.round(retPct * 10) / 10,
+          estimated_annual_dividend: Math.round(estAnnDiv),
+          cumulative_dividends: Math.round(cumDiv),
+        });
+      }
+    }
+    return { ...sim, ccy, lumpSum, monthlyDca, horizons };
+  }, [rec?.compounding_simulation, dcaLumpSumInput, dcaMonthlyInput]);
+
+  const formatSimMoney = (val: number, ccy: string) =>
+    ccy === "IDR"
+      ? formatCurrency(val, "IDR")
+      : `$${Number(val).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 
   return (
     <div className="space-y-6 pb-20 max-w-7xl mx-auto">
@@ -732,17 +809,17 @@ export default function InvestmentResearchPage() {
           <div className="p-6 rounded-3xl bg-card border border-border shadow-sm space-y-6">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-4">
               <div>
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2.5 flex-wrap">
                   <Radar className="w-6 h-6 text-[#f0b000]" />
                   <h2 className="text-lg font-black text-foreground">
-                    Hasil Scan Peluang Pasar {finalResult.market?.toUpperCase()}
+                    Quality, Value &amp; Compounding Screener ({finalResult.market?.toUpperCase()})
                   </h2>
                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#f0b000]/15 text-[#8a6300] dark:text-[#f0b000] border border-[#f0b000]/30">
                     {finalResult.symbols_scanned || finalResult.ranked_candidates.length} Aset Terpindai
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Peringkat peluang investasi berdasarkan kombinasi momentum teknikal, valuasi fundamental, dan kepatuhan syariah.
+                  Skoring 65% Kualitas Fundamental &amp; Valuasi + 35% Posisi Siklus Akumulasi (1D/1W) untuk compounding jangka panjang.
                 </p>
               </div>
 
@@ -754,11 +831,37 @@ export default function InvestmentResearchPage() {
               )}
             </div>
 
+            {finalResult.macro_regime && (
+              <div className="p-3.5 rounded-2xl bg-secondary/40 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <Landmark className="w-4 h-4 text-[#f0b000] shrink-0" />
+                  <span className="font-bold text-foreground">{finalResult.macro_regime.regime_label}</span>
+                  <span className="text-muted-foreground hidden md:inline">• {finalResult.macro_regime.implication_for_asset}</span>
+                </div>
+                <div className="flex items-center gap-3 text-[11px] font-mono text-muted-foreground shrink-0">
+                  {finalResult.macro_regime.usd_idr_rate && (
+                    <span>USD/IDR: <b className="text-foreground">Rp {Number(finalResult.macro_regime.usd_idr_rate).toLocaleString("id-ID")}</b></span>
+                  )}
+                  {finalResult.macro_regime.us10y_yield_pct && (
+                    <span>US10Y: <b className="text-foreground">{finalResult.macro_regime.us10y_yield_pct}%</b></span>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Ranked Candidates Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {finalResult.ranked_candidates.map((cand: RankedCandidate, idx: number) => {
                 const isBuy = (cand.stance || "").includes("BUY") || (cand.stance || "").includes("ACCUMULATE");
                 const isHold = (cand.stance || "").includes("HOLD");
+                const accZone = cand.accumulation_zone || cand.investment_zones?.accumulation_zone;
+                const fvTarget = cand.fair_value_target || cand.investment_zones?.fair_value_target;
+                const invZone = cand.thesis_invalidation || cand.investment_zones?.thesis_invalidation;
+                const accLow = accZone?.ideal_low ?? cand.support_level;
+                const accHigh = accZone?.ideal_high;
+                const fvVal = fvTarget?.fair_value ?? cand.fair_value_estimate ?? cand.target_price_1;
+                const invSummary = invZone?.summary ?? cand.invalidation_trigger;
+
                 return (
                   <div
                     key={cand.symbol}
@@ -796,9 +899,7 @@ export default function InvestmentResearchPage() {
                       {/* Price & Change */}
                       <div className="flex items-baseline justify-between">
                         <div className="text-lg font-black text-foreground">
-                          {finalResult.market?.includes("ihsg")
-                            ? formatCurrency(cand.price, "IDR")
-                            : `$${Number(cand.price).toLocaleString()}`}
+                          {formatAssetPrice(cand.price, finalResult.market)}
                         </div>
                         {cand.change_pct !== undefined && (
                           <div
@@ -812,53 +913,83 @@ export default function InvestmentResearchPage() {
                         )}
                       </div>
 
-                      {/* Technical Indicators Pill */}
+                      {/* Quality, Valuation & Cycle Metrics Pill */}
                       <div className="grid grid-cols-3 gap-1.5 p-2 rounded-xl bg-card border border-border text-[10px] text-center">
                         <div>
-                          <div className="text-muted-foreground font-semibold">Skor AI</div>
+                          <div className="text-muted-foreground font-semibold">Skor Total</div>
                           <div className="font-black text-amber-600 dark:text-amber-400">
-                            {cand.score?.toFixed(1)}/10
+                            {cand.score?.toFixed(1)}/100
                           </div>
                         </div>
                         <div>
-                          <div className="text-muted-foreground font-semibold">RSI (14)</div>
+                          <div className="text-muted-foreground font-semibold">
+                            {cand.piotroski_f_score != null
+                              ? "F-Score"
+                              : cand.mcap_to_fdv_pct != null
+                              ? "MCap/FDV"
+                              : "RSI (1D)"}
+                          </div>
                           <div className="font-black text-foreground">
-                            {cand.rsi ? cand.rsi.toFixed(1) : "-"}
+                            {cand.piotroski_f_score != null
+                              ? `${cand.piotroski_f_score}/9`
+                              : cand.mcap_to_fdv_pct != null
+                              ? `${cand.mcap_to_fdv_pct}%`
+                              : cand.rsi
+                              ? cand.rsi.toFixed(1)
+                              : "-"}
                           </div>
                         </div>
                         <div>
-                          <div className="text-muted-foreground font-semibold">Confidence</div>
-                          <div className="font-black text-foreground">
-                            {cand.confidence || 75}%
+                          <div className="text-muted-foreground font-semibold">
+                            {cand.margin_of_safety_pct != null
+                              ? "MoS"
+                              : cand.dividend_yield_pct != null
+                              ? "Div Yield"
+                              : "Confidence"}
+                          </div>
+                          <div
+                            className={`font-black ${
+                              cand.margin_of_safety_pct != null
+                                ? cand.margin_of_safety_pct >= 0
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-rose-500"
+                                : "text-foreground"
+                            }`}
+                          >
+                            {cand.margin_of_safety_pct != null
+                              ? `${cand.margin_of_safety_pct >= 0 ? "+" : ""}${cand.margin_of_safety_pct.toFixed(1)}%`
+                              : cand.dividend_yield_pct != null
+                              ? `${cand.dividend_yield_pct.toFixed(2)}%`
+                              : `${cand.confidence || 75}%`}
                           </div>
                         </div>
                       </div>
 
-                      {/* Targets TP1 - TP3 */}
-                      {(cand.target_price_1 || cand.support_level) && (
-                        <div className="space-y-1 text-[11px] pt-1">
-                          <div className="flex justify-between text-muted-foreground">
-                            <span>Support Kuat:</span>
-                            <span className="font-mono font-bold text-foreground">
-                              {cand.support_level ? (finalResult.market?.includes("ihsg") ? formatCurrency(cand.support_level, "IDR") : `$${cand.support_level}`) : "-"}
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-muted-foreground">
-                            <span>Target TP1:</span>
-                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                              {cand.target_price_1 ? (finalResult.market?.includes("ihsg") ? formatCurrency(cand.target_price_1, "IDR") : `$${cand.target_price_1}`) : "-"}
-                            </span>
-                          </div>
-                          {cand.target_price_2 && (
-                            <div className="flex justify-between text-muted-foreground">
-                              <span>Target TP2:</span>
-                              <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                                {finalResult.market?.includes("ihsg") ? formatCurrency(cand.target_price_2, "IDR") : `$${cand.target_price_2}`}
-                              </span>
-                            </div>
-                          )}
+                      {/* 3 Investment Price Zones Summary */}
+                      <div className="space-y-1.5 text-[11px] pt-1">
+                        <div className="flex justify-between gap-2 text-muted-foreground">
+                          <span className="shrink-0">Zona Akumulasi (DCA):</span>
+                          <span className="font-mono font-bold text-foreground text-right">
+                            {accLow != null
+                              ? accHigh != null
+                                ? `${formatAssetPrice(accLow, finalResult.market)} - ${formatAssetPrice(accHigh, finalResult.market)}`
+                                : formatAssetPrice(accLow, finalResult.market)
+                              : "-"}
+                          </span>
                         </div>
-                      )}
+                        <div className="flex justify-between gap-2 text-muted-foreground">
+                          <span className="shrink-0">Target Nilai Wajar:</span>
+                          <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-right">
+                            {fvVal != null ? formatAssetPrice(fvVal, finalResult.market) : "-"}
+                          </span>
+                        </div>
+                        {invSummary && (
+                          <div className="p-2 rounded-xl bg-rose-500/5 border border-rose-500/20 text-[10px] text-muted-foreground leading-snug line-clamp-2">
+                            <span className="font-bold text-rose-600 dark:text-rose-400">Invalidasi: </span>
+                            {invSummary}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <button
@@ -1044,7 +1175,7 @@ export default function InvestmentResearchPage() {
               <div className="p-4 rounded-2xl bg-secondary/40 border border-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="text-xs font-bold text-foreground flex items-center gap-2">
-                    <span>💡 Rekomendasi Alokasi Dompet & Strategi Cicil (DCA):</span>
+                    <span>💡 Rekomendasi Alokasi Dompet &amp; Strategi Cicil (DCA):</span>
                     <span className="text-muted-foreground font-normal">
                       ({rec.portfolio_and_dca_simulation.risk_profile_match})
                     </span>
@@ -1065,7 +1196,10 @@ export default function InvestmentResearchPage() {
                     <div className="text-right">
                       <div className="text-[10px] text-muted-foreground">Saran DCA Bulanan</div>
                       <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                        {formatCurrency(rec.portfolio_and_dca_simulation.suggested_monthly_dca_amount)}
+                        {formatSimMoney(
+                          rec.portfolio_and_dca_simulation.suggested_monthly_dca_amount,
+                          rec.compounding_simulation?.currency || (rec.market?.includes("ihsg") ? "IDR" : "USD")
+                        )}
                       </div>
                     </div>
                   )}
@@ -1073,6 +1207,498 @@ export default function InvestmentResearchPage() {
               </div>
             )}
           </div>
+
+          {/* 3 ZONA HARGA INVESTASI (WEALTH COMPOUNDING FRAMEWORK) */}
+          {rec.investment_price_zones && (
+            <div className="p-6 rounded-3xl bg-card border border-border shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Crosshair className="w-4 h-4 text-[#f0b000]" />
+                  3 Zona Harga Investasi (Pengganti ATR Stop Loss &amp; R-Multiple)
+                </h3>
+                {rec.investment_price_zones.reference_price != null && (
+                  <span className="text-xs font-mono text-muted-foreground">
+                    Harga Referensi:{" "}
+                    <b className="text-foreground">
+                      {formatAssetPrice(rec.investment_price_zones.reference_price, rec.market)}
+                    </b>
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Zona 1: Akumulasi / DCA Ideal */}
+                <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/25 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                      1. Zona Akumulasi / DCA Ideal
+                    </span>
+                    {rec.investment_price_zones.accumulation_zone?.status && (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+                        {rec.investment_price_zones.accumulation_zone.status}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-base font-black font-mono text-foreground">
+                    {rec.investment_price_zones.accumulation_zone?.ideal_low != null
+                      ? `${formatAssetPrice(rec.investment_price_zones.accumulation_zone.ideal_low, rec.market)} - ${formatAssetPrice(rec.investment_price_zones.accumulation_zone.ideal_high, rec.market)}`
+                      : "UNAVAILABLE"}
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {rec.investment_price_zones.accumulation_zone?.guidance ||
+                      rec.investment_price_zones.accumulation_zone_summary ||
+                      "Gunakan area Support Major / SMA 200 untuk cicil DCA bertahap."}
+                  </p>
+                </div>
+
+                {/* Zona 2: Target Nilai Wajar 1-3 Tahun */}
+                <div className="p-4 rounded-2xl bg-sky-500/5 border border-sky-500/25 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-sky-700 dark:text-sky-400">
+                      2. Target Nilai Wajar (1–3 Thn)
+                    </span>
+                    {rec.investment_price_zones.fair_value_target?.valuation_status && (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-sky-500/15 text-sky-700 dark:text-sky-300">
+                        {rec.investment_price_zones.fair_value_target.valuation_status}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-base font-black font-mono text-foreground">
+                    {rec.investment_price_zones.fair_value_target?.fair_value != null
+                      ? formatAssetPrice(rec.investment_price_zones.fair_value_target.fair_value, rec.market)
+                      : rec.valuation_summary?.fair_value_estimate || "UNAVAILABLE"}
+                  </div>
+                  {rec.investment_price_zones.fair_value_target?.horizon_3y_upper != null && (
+                    <div className="text-[11px] font-mono text-muted-foreground">
+                      Potensi Upper 3Y:{" "}
+                      <b className="text-foreground">
+                        {formatAssetPrice(rec.investment_price_zones.fair_value_target.horizon_3y_upper, rec.market)}
+                      </b>
+                      {rec.investment_price_zones.fair_value_target.margin_of_safety_pct != null && (
+                        <span className="ml-1.5 font-bold">
+                          (MoS: {rec.investment_price_zones.fair_value_target.margin_of_safety_pct >= 0 ? "+" : ""}
+                          {rec.investment_price_zones.fair_value_target.margin_of_safety_pct}%)
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {rec.investment_price_zones.fair_value_target_summary ||
+                      (rec.investment_price_zones.fair_value_target?.source
+                        ? `Basis: ${rec.investment_price_zones.fair_value_target.source}`
+                        : "Estimasi nilai wajar jangka menengah berbasis DCF & valuasi historis.")}
+                  </p>
+                </div>
+
+                {/* Zona 3: Kondisi Invalidasi Tesis */}
+                <div className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/25 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-rose-700 dark:text-rose-400 flex items-center gap-1">
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      3. Kondisi Invalidasi Tesis
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/15 text-rose-700 dark:text-rose-300">
+                      Fundamental Exit
+                    </span>
+                  </div>
+                  <p className="text-xs text-foreground/90 font-medium leading-relaxed">
+                    {rec.investment_price_zones.thesis_invalidation?.summary ||
+                      rec.investment_price_zones.thesis_invalidation_trigger ||
+                      "Keluar/rebalance hanya jika terjadi kerusakan fundamental bisnis atau struktural."}
+                  </p>
+                  {rec.investment_price_zones.thesis_invalidation?.triggers &&
+                    rec.investment_price_zones.thesis_invalidation.triggers.length > 0 && (
+                      <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
+                        {rec.investment_price_zones.thesis_invalidation.triggers.slice(0, 3).map((t, ti) => (
+                          <li key={ti}>{t}</li>
+                        ))}
+                      </ul>
+                    )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* METRIK INSTITUSIONAL & RISIKO MULTI-TAHUN (FMP / TWELVE DATA / TOKENOMICS) */}
+          {rec.institutional_metrics && (
+            <div className="p-6 rounded-3xl bg-card border border-border shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Gauge className="w-4 h-4 text-[#f0b000]" />
+                  Skor Institusional, Risiko Multi-Tahun &amp; Siklus Panjang
+                </h3>
+                <div className="flex items-center gap-2 text-[11px]">
+                  {rec.institutional_metrics.cycle_position && (
+                    <span className="px-2.5 py-0.5 rounded-lg font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                      Siklus: {rec.institutional_metrics.cycle_position}
+                    </span>
+                  )}
+                  {rec.institutional_metrics.historical_provider && (
+                    <span className="text-muted-foreground">
+                      Data: {rec.institutional_metrics.historical_provider}
+                      {rec.institutional_metrics.fmp_used ? " + FMP" : ""}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-center">
+                {rec.market === "crypto" ? (
+                  <>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">MCap / FDV Ratio</div>
+                      <div className="text-sm font-black text-foreground mt-0.5">
+                        {rec.institutional_metrics.mcap_to_fdv_ratio != null
+                          ? `${(rec.institutional_metrics.mcap_to_fdv_ratio * 100).toFixed(1)}%`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Supply Beredar</div>
+                      <div className="text-sm font-black text-foreground mt-0.5">
+                        {rec.institutional_metrics.supply_issued_pct != null
+                          ? `${rec.institutional_metrics.supply_issued_pct}%`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Risiko Dilusi</div>
+                      <div className="text-sm font-black text-amber-600 dark:text-amber-400 mt-0.5">
+                        {rec.institutional_metrics.dilution_risk || "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">DefiLlama TVL</div>
+                      <div className="text-sm font-black text-foreground mt-0.5">
+                        {rec.institutional_metrics.defillama_tvl_usd != null
+                          ? `$${(rec.institutional_metrics.defillama_tvl_usd / 1e6).toFixed(1)}M`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Revenue Protokol/24h</div>
+                      <div className="text-sm font-black text-emerald-600 dark:text-emerald-400 mt-0.5">
+                        {rec.institutional_metrics.defillama_daily_revenue_usd != null
+                          ? `$${Number(rec.institutional_metrics.defillama_daily_revenue_usd).toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Max Drawdown</div>
+                      <div className="text-sm font-black text-rose-500 mt-0.5">
+                        {rec.institutional_metrics.max_drawdown_pct != null
+                          ? `${rec.institutional_metrics.max_drawdown_pct}%`
+                          : "-"}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Piotroski F-Score</div>
+                      <div className="text-sm font-black text-[#8a6300] dark:text-[#f0b000] mt-0.5">
+                        {rec.institutional_metrics.piotroski_f_score != null
+                          ? `${rec.institutional_metrics.piotroski_f_score} / 9`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Altman Z-Score</div>
+                      <div className="text-sm font-black text-foreground mt-0.5">
+                        {rec.institutional_metrics.altman_z_score != null
+                          ? rec.institutional_metrics.altman_z_score.toFixed(2)
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">ROIC / ROE</div>
+                      <div className="text-sm font-black text-emerald-600 dark:text-emerald-400 mt-0.5">
+                        {rec.institutional_metrics.roic_pct != null
+                          ? `${rec.institutional_metrics.roic_pct}%`
+                          : "-"}{" "}
+                        /{" "}
+                        {rec.institutional_metrics.roe_pct != null
+                          ? `${rec.institutional_metrics.roe_pct}%`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Margin of Safety</div>
+                      <div
+                        className={`text-sm font-black mt-0.5 ${
+                          (rec.institutional_metrics.margin_of_safety_pct ?? 0) >= 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-rose-500"
+                        }`}
+                      >
+                        {rec.institutional_metrics.margin_of_safety_pct != null
+                          ? `${rec.institutional_metrics.margin_of_safety_pct >= 0 ? "+" : ""}${rec.institutional_metrics.margin_of_safety_pct}%`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">Div Yield / 5Y Avg</div>
+                      <div className="text-sm font-black text-foreground mt-0.5">
+                        {rec.institutional_metrics.dividend_yield_pct != null
+                          ? `${rec.institutional_metrics.dividend_yield_pct.toFixed(2)}%`
+                          : "-"}{" "}
+                        /{" "}
+                        {rec.institutional_metrics.dividend_5y_avg_pct != null
+                          ? `${rec.institutional_metrics.dividend_5y_avg_pct.toFixed(2)}%`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-secondary/40 border border-border">
+                      <div className="text-[10px] text-muted-foreground font-semibold">3Y / 5Y CAGR</div>
+                      <div className="text-sm font-black text-foreground mt-0.5">
+                        {rec.institutional_metrics.cagr_3y_pct != null
+                          ? `${rec.institutional_metrics.cagr_3y_pct}%`
+                          : "-"}{" "}
+                        /{" "}
+                        {rec.institutional_metrics.cagr_5y_pct != null
+                          ? `${rec.institutional_metrics.cagr_5y_pct}%`
+                          : "-"}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 text-xs">
+                <div className="p-2.5 rounded-xl bg-secondary/20 border border-border flex items-center justify-between">
+                  <span className="text-muted-foreground">SMA 50-Day:</span>
+                  <span className="font-mono font-bold text-foreground">
+                    {formatAssetPrice(rec.institutional_metrics.sma50_day, rec.market)}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-secondary/20 border border-border flex items-center justify-between">
+                  <span className="text-muted-foreground">SMA 200-Day:</span>
+                  <span className="font-mono font-bold text-foreground">
+                    {formatAssetPrice(rec.institutional_metrics.sma200_day, rec.market)}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-secondary/20 border border-border flex items-center justify-between">
+                  <span className="text-muted-foreground">Max Drawdown:</span>
+                  <span className="font-mono font-bold text-rose-500">
+                    {rec.institutional_metrics.max_drawdown_pct != null
+                      ? `${rec.institutional_metrics.max_drawdown_pct}%`
+                      : "-"}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-secondary/20 border border-border flex items-center justify-between">
+                  <span className="text-muted-foreground">Volatilitas/Thn:</span>
+                  <span className="font-mono font-bold text-foreground">
+                    {rec.institutional_metrics.annualized_volatility_pct != null
+                      ? `${rec.institutional_metrics.annualized_volatility_pct}%`
+                      : "-"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* KALKULATOR SIMULASI DIVIDEND & DCA COMPOUNDING OTOMATIS (1, 3, 5 TAHUN) */}
+          {compoundingCalc && (
+            <div className="p-6 rounded-3xl bg-card border border-border shadow-sm space-y-5">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-border pb-4">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Calculator className="w-4 h-4 text-[#f0b000]" />
+                    Simulasi Otomatis Dividend &amp; DCA Compounding ({compoundingCalc.ccy})
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Asumsi CAGR Harga: <b>{compoundingCalc.assumed_annual_cagr_pct}%/thn</b> ({compoundingCalc.cagr_basis}) + Reinvestasi Dividen: <b>{compoundingCalc.assumed_dividend_yield_pct}%/thn</b>
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 shrink-0">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-muted-foreground mb-1">
+                      Lump-Sum Awal ({compoundingCalc.ccy})
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={dcaLumpSumInput}
+                      onChange={(e) => setDcaLumpSumInput(e.target.value)}
+                      className="w-36 px-3 py-1.5 rounded-xl bg-secondary border border-border text-xs font-mono font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-[#f0b000]/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-muted-foreground mb-1">
+                      Cicilan DCA/Bulan ({compoundingCalc.ccy})
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={dcaMonthlyInput}
+                      onChange={(e) => setDcaMonthlyInput(e.target.value)}
+                      className="w-36 px-3 py-1.5 rounded-xl bg-secondary border border-border text-xs font-mono font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-[#f0b000]/40"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {compoundingCalc.horizons.map((h) => (
+                  <div
+                    key={h.years}
+                    className="p-4 rounded-2xl bg-gradient-to-b from-secondary/40 to-secondary/20 border border-border space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-foreground">Horizon {h.years} Tahun</span>
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                        +{h.total_return_pct}% Return
+                      </span>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Estimasi Nilai Portofolio</div>
+                      <div className="text-lg font-black font-mono text-foreground">
+                        {formatSimMoney(h.projected_value, compoundingCalc.ccy)}
+                      </div>
+                    </div>
+                    <div className="space-y-1 text-[11px] pt-2 border-t border-border/60">
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Total Modal Disetor:</span>
+                        <span className="font-mono font-semibold text-foreground">
+                          {formatSimMoney(h.total_principal, compoundingCalc.ccy)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Potensi Dividen / Thn:</span>
+                        <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                          {formatSimMoney(h.estimated_annual_dividend, compoundingCalc.ccy)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* KONSENTRASI PORTOFOLIO PENGGUNA & KONTEKS MAKROEKONOMI */}
+          {(rec.portfolio_concentration_analysis || rec.macro_regime) && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {rec.portfolio_concentration_analysis && (
+                <div className="p-6 rounded-3xl bg-card border border-border shadow-sm space-y-3">
+                  <div className="flex items-center justify-between border-b border-border pb-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <PieChart className="w-4 h-4 text-[#f0b000]" />
+                      Korelasi &amp; Konsentrasi Portofolio Anda
+                    </h3>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-lg text-[10px] font-bold ${
+                        rec.portfolio_concentration_analysis.concentration_status === "AMAN" ||
+                        rec.portfolio_concentration_analysis.concentration_status === "BELUM_TERPAPAR"
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                          : rec.portfolio_concentration_analysis.concentration_status === "WASPADA_KONSENTRASI"
+                          ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                          : "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                      }`}
+                    >
+                      {rec.portfolio_concentration_analysis.concentration_status}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-center p-2.5 rounded-xl bg-secondary/30 border border-border text-xs">
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Eksposur Kelas Aset</div>
+                      <div className="font-black text-foreground">
+                        {rec.portfolio_concentration_analysis.current_class_allocation_pct}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Target Profil Risiko</div>
+                      <div className="font-black text-foreground">
+                        {rec.portfolio_concentration_analysis.target_class_allocation_pct}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Maks per Aset</div>
+                      <div className="font-black text-amber-600 dark:text-amber-400">
+                        {rec.portfolio_concentration_analysis.recommended_max_asset_pct}%
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-foreground/90 leading-relaxed">
+                    {rec.portfolio_concentration_analysis.warning_message}
+                  </p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    <b className="text-foreground">Saran Alokasi:</b>{" "}
+                    {rec.portfolio_concentration_analysis.proportional_allocation_advice}
+                  </p>
+                  {rec.portfolio_concentration_analysis.matching_wallets &&
+                    rec.portfolio_concentration_analysis.matching_wallets.length > 0 && (
+                      <div className="pt-1 flex flex-wrap gap-1.5">
+                        {rec.portfolio_concentration_analysis.matching_wallets.map((wName, wi) => (
+                          <span
+                            key={wi}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] bg-secondary border border-border text-muted-foreground"
+                          >
+                            <Wallet className="w-3 h-3 text-[#f0b000]" />
+                            {wName}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                </div>
+              )}
+
+              {rec.macro_regime && (
+                <div className="p-6 rounded-3xl bg-card border border-border shadow-sm space-y-3">
+                  <div className="flex items-center justify-between border-b border-border pb-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Landmark className="w-4 h-4 text-[#f0b000]" />
+                      Konteks Makroekonomi (Macro Regime)
+                    </h3>
+                    <span className="px-2.5 py-0.5 rounded-lg text-[10px] font-bold bg-sky-500/15 text-sky-600 dark:text-sky-400">
+                      {rec.macro_regime.interest_rate_regime}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center p-2.5 rounded-xl bg-secondary/30 border border-border text-xs">
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">USD / IDR</div>
+                      <div className="font-black text-foreground">
+                        {rec.macro_regime.usd_idr_rate
+                          ? `Rp ${Number(rec.macro_regime.usd_idr_rate).toLocaleString("id-ID")}`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Emas / Gram</div>
+                      <div className="font-black text-foreground">
+                        {rec.macro_regime.gold_idr_per_gram
+                          ? `Rp ${Number(rec.macro_regime.gold_idr_per_gram).toLocaleString("id-ID")}`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">US10Y Yield</div>
+                      <div className="font-black text-foreground">
+                        {rec.macro_regime.us10y_yield_pct != null ? `${rec.macro_regime.us10y_yield_pct}%` : "-"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">DXY Index</div>
+                      <div className="font-black text-foreground">
+                        {rec.macro_regime.dxy_index ?? "-"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-foreground/90 leading-relaxed">
+                    {rec.macro_regime.regime_summary}
+                  </p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    <b className="text-foreground">Implikasi Aset:</b> {rec.macro_regime.implication_for_asset}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Detailed Analyst Reports Tabs */}
           <div className="p-6 rounded-3xl bg-card border border-border shadow-sm space-y-4">
@@ -1245,7 +1871,12 @@ export default function InvestmentResearchPage() {
                               </div>
                               <div className="flex items-center gap-2 text-muted-foreground text-[10px]">
                                 <span>RSI 1D: <b className="text-foreground">{snap.rsi_1d ?? "-"}</b></span>
-                                <span>RSI 1H: <b className="text-foreground">{snap.rsi_1h ?? "-"}</b></span>
+                                <span>RSI 1W: <b className="text-foreground">{snap.rsi_1w ?? snap.rsi_1h ?? "-"}</b></span>
+                                {snap.cycle_position && (
+                                  <span className="px-1.5 py-0.5 rounded bg-secondary text-foreground font-semibold">
+                                    {snap.cycle_position}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           ))}

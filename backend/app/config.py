@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     EXA_API_KEY: Optional[str] = ""
     EXA_TIMEOUT: float = 8.0
 
+    # Financial Modeling Prep (FMP) & Twelve Data API
+    FMP_API_KEY: str = ""
+    TWELVE_DATA_API_KEY: str = ""
+
     # Multi-Agent Investment Research
     RECOMMENDATION_LIMIT: int = 8
     ENFORCE_RESEARCH_QUOTA: bool = False  # Free for all users for now; flip to True to enable quotas later

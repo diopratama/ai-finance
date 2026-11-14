@@ -23,7 +23,7 @@ from app.db import (
     get_db,
     SessionLocal,
 )
-from app.services.fire_engine import is_investment_wallet
+from app.services.fire_engine import evaluate_investment_portfolio, is_investment_wallet
 from app.services.market_rates_service import convert_to_idr, fetch_live_market_rates
 from app.investment_ai.market_data import get_market_quote
 from app.investment_ai.sharia_reference import load_sharia_reference
@@ -105,6 +105,15 @@ def _build_user_profile_context(user: User, db: Session) -> Dict[str, Any]:
 
     surplus_val = max(0.0, income_val - monthly_exp)
 
+    portfolio_eval = evaluate_investment_portfolio(
+        wallets=wallets,
+        risk_tolerance=risk_tol,
+        sharia_preference=sharia_pref,
+        liquid_cash_balance=liquid_cash,
+        monthly_expenses=monthly_exp,
+        is_married=bool(getattr(profile, "is_married", False)) if profile else False,
+        dependents_count=int(getattr(profile, "dependents_count", 0) or 0) if profile else 0,
+    )
     return {
         "liquid_cash_balance": liquid_cash,
         "total_investment_balance": invest_val,
@@ -113,6 +122,8 @@ def _build_user_profile_context(user: User, db: Session) -> Dict[str, Any]:
         "monthly_surplus": surplus_val,
         "risk_tolerance": risk_tol,
         "sharia_preference": sharia_pref,
+        "portfolio_evaluation": portfolio_eval,
+        "market_rates": rates,
     }
 
 
@@ -120,7 +131,7 @@ def _build_user_profile_context(user: User, db: Session) -> Dict[str, Any]:
 def get_quote(
     market: str = Query(..., description="ihsg, crypto, us_stock, us_etf"),
     symbol: str = Query(..., description="Ticker/symbol e.g. BBCA, BTC, AAPL"),
-    timeframe: str = Query("1D", description="1D, 1W, 1H"),
+    timeframe: str = Query("1D", description="1D, 1W, 1M"),
     current_user: User = Depends(get_current_user),
 ):
     """Fetches indicative market quote, price, and daily statistics."""

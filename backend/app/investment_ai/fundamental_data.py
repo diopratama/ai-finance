@@ -1,13 +1,14 @@
 """Real fundamental data providers for the Fundamental / On-Chain agents.
 
-Before this module existed the agent skills referenced tools (``fetch_idx_financials``,
-``check_sharia_compliance``, ``fetch_tokenomics`` ...) that were never implemented, so
-the LLM filled P/E, ROE, TVL or "halal status" from memory. Everything here is fetched
-from a real provider (Yahoo Finance statements, CoinGecko, DefiLlama, Binance Futures).
-When a value cannot be fetched it is reported as UNAVAILABLE, never estimated.
+Fetches institutional-grade fundamentals from Financial Modeling Prep (FMP),
+with deterministic financial-statement fallback via Yahoo Finance (especially for
+IDX/IHSG equities), ETF metrics via Yahoo Finance, and long-term crypto
+tokenomics/revenue via CoinGecko and DefiLlama. Short-term futures derivatives
+data has been intentionally removed to maintain an investment-only horizon.
 """
 
 import logging
+import math
 import threading
 import time
 import urllib.parse
@@ -17,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 # pyrefly: ignore[missing-import]
 import yfinance as yf
 
+from app.config import settings
 from app.investment_ai.cache_store import redis_get_json, redis_set_json
 from app.investment_ai.market_data import (
     _http_get_json,
@@ -124,7 +126,7 @@ def _fmt_usd(value: Optional[float]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Stocks (IHSG / US) via Yahoo Finance statements
+# Stocks (IHSG / US) via Financial Modeling Prep (FMP) + Yahoo Finance Statements
 # ---------------------------------------------------------------------------
 
 
@@ -138,6 +140,333 @@ def _first_row(df: Any, names: List[str]) -> Optional[float]:
             if len(series):
                 return _safe_float(series.iloc[0])
     return None
+
+
+def _statement_series(df: Any, names: List[str], limit: int = 5) -> List[float]:
+    """Extracts up to ``limit`` annual values newest-first from a yfinance statement."""
+    if df is None or getattr(df, "empty", True):
+        return []
+    for name in names:
+        if name in df.index:
+            series = df.loc[name].dropna()
+            vals = [_safe_float(v) for v in series.iloc[:limit].tolist()]
+            clean = [v for v in vals if v is not None]
+            if clean:
+                return clean
+    return []
+
+
+def _calc_cagr_from_series(newest_first: List[float]) -> Optional[float]:
+    """Computes CAGR (decimal, e.g. 0.12 = 12%) from newest-first annual values."""
+    if len(newest_first) < 2:
+        return None
+    end_val = newest_first[0]
+    start_val = newest_first[-1]
+    periods = len(newest_first) - 1
+    if end_val <= 0 or start_val <= 0 or periods <= 0:
+        return None
+    try:
+        cagr = (end_val / start_val) ** (1.0 / periods) - 1.0
+        return cagr if math.isfinite(cagr) else None
+    except Exception:
+        return None
+
+
+def _compute_piotroski_f_score(income: Any, balance_sheet: Any, cashflow: Any) -> Optional[int]:
+    """Computes deterministic Piotroski F-Score (0-9) from multi-year statements."""
+    if income is None or balance_sheet is None or getattr(income, "empty", True) or getattr(balance_sheet, "empty", True):
+        return None
+
+    ni_s = _statement_series(income, ["Net Income", "Net Income Common Stockholders"], 2)
+    assets_s = _statement_series(balance_sheet, ["Total Assets"], 2)
+    ocf_s = _statement_series(cashflow, ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"], 2)
+    rev_s = _statement_series(income, ["Total Revenue", "Operating Revenue"], 2)
+    gp_s = _statement_series(income, ["Gross Profit"], 2)
+    ltd_s = _statement_series(balance_sheet, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation"], 2)
+    ca_s = _statement_series(balance_sheet, ["Current Assets"], 2)
+    cl_s = _statement_series(balance_sheet, ["Current Liabilities"], 2)
+    shares_s = _statement_series(balance_sheet, ["Ordinary Shares Number", "Share Issued"], 2)
+
+    if not ni_s or not assets_s or assets_s[0] <= 0:
+        return None
+
+    score = 0
+    evaluated = 0
+
+    # 1. Positive ROA
+    roa_curr = ni_s[0] / assets_s[0]
+    evaluated += 1
+    if roa_curr > 0:
+        score += 1
+
+    # 2. Positive Operating Cash Flow
+    if ocf_s:
+        evaluated += 1
+        if ocf_s[0] > 0:
+            score += 1
+
+    # 3. Improving ROA
+    if len(ni_s) >= 2 and len(assets_s) >= 2 and assets_s[1] > 0:
+        evaluated += 1
+        if roa_curr > (ni_s[1] / assets_s[1]):
+            score += 1
+
+    # 4. Accrual quality (OCF > Net Income)
+    if ocf_s:
+        evaluated += 1
+        if ocf_s[0] > ni_s[0]:
+            score += 1
+
+    # 5. Lower Long-Term Debt to Assets ratio
+    if len(ltd_s) >= 2 and len(assets_s) >= 2 and assets_s[1] > 0:
+        evaluated += 1
+        if (ltd_s[0] / assets_s[0]) <= (ltd_s[1] / assets_s[1]):
+            score += 1
+
+    # 6. Higher Current Ratio
+    if len(ca_s) >= 2 and len(cl_s) >= 2 and cl_s[0] > 0 and cl_s[1] > 0:
+        evaluated += 1
+        if (ca_s[0] / cl_s[0]) > (ca_s[1] / cl_s[1]):
+            score += 1
+
+    # 7. No dilution in shares issued
+    if len(shares_s) >= 2:
+        evaluated += 1
+        if shares_s[0] <= shares_s[1] * 1.005:
+            score += 1
+
+    # 8. Higher Gross Margin
+    if len(gp_s) >= 2 and len(rev_s) >= 2 and rev_s[0] > 0 and rev_s[1] > 0:
+        evaluated += 1
+        if (gp_s[0] / rev_s[0]) > (gp_s[1] / rev_s[1]):
+            score += 1
+
+    # 9. Higher Asset Turnover
+    if len(rev_s) >= 2 and len(assets_s) >= 2 and assets_s[1] > 0:
+        evaluated += 1
+        if (rev_s[0] / assets_s[0]) > (rev_s[1] / assets_s[1]):
+            score += 1
+
+    return score if evaluated >= 5 else None
+
+
+def _compute_altman_z_score(
+    income: Any, balance_sheet: Any, market_cap: Optional[float]
+) -> Optional[float]:
+    """Computes deterministic Altman Z-Score from financial statements."""
+    if income is None or balance_sheet is None or market_cap is None or market_cap <= 0:
+        return None
+    total_assets = _first_row(balance_sheet, ["Total Assets"])
+    total_liab = _first_row(balance_sheet, ["Total Liabilities Net Minority Interest", "Total Liabilities"])
+    if not total_assets or total_assets <= 0 or not total_liab or total_liab <= 0:
+        return None
+    ca = _first_row(balance_sheet, ["Current Assets"])
+    cl = _first_row(balance_sheet, ["Current Liabilities"])
+    retained = _first_row(balance_sheet, ["Retained Earnings"])
+    ebit = _first_row(income, ["EBIT", "Operating Income"])
+    rev = _first_row(income, ["Total Revenue", "Operating Revenue"])
+
+    if ca is None or cl is None or retained is None or ebit is None or rev is None:
+        return None
+
+    a = (ca - cl) / total_assets
+    b = retained / total_assets
+    c = ebit / total_assets
+    d = market_cap / total_liab
+    e = rev / total_assets
+    z = 1.2 * a + 1.4 * b + 3.3 * c + 0.6 * d + 1.0 * e
+    return round(z, 2) if math.isfinite(z) else None
+
+
+def _compute_statement_dcf_and_graham(
+    current_price: Optional[float],
+    info: Dict[str, Any],
+    fcf: Optional[float],
+    net_debt: Optional[float],
+    shares: Optional[float],
+    growth_rate: Optional[float],
+) -> Dict[str, Any]:
+    """Fallback Intrinsic Value estimator using 5Y FCF DCF + Graham Number + target price."""
+    dcf_val = None
+    if fcf and fcf > 0 and shares and shares > 0:
+        g = max(0.03, min(0.15, growth_rate if growth_rate is not None else 0.07))
+        r = 0.105
+        tg = 0.04
+        pv = sum((fcf * ((1 + g) ** yr)) / ((1 + r) ** yr) for yr in range(1, 6))
+        tv = (fcf * ((1 + g) ** 5) * (1 + tg)) / (r - tg)
+        pv_tv = tv / ((1 + r) ** 5)
+        equity_val = pv + pv_tv - (net_debt or 0.0)
+        if equity_val > 0:
+            dcf_val = equity_val / shares
+
+    eps = _safe_float(info.get("trailingEps"))
+    bvps = _safe_float(info.get("bookValue"))
+    graham_val = None
+    if eps is not None and bvps is not None and eps > 0 and bvps > 0:
+        graham_val = math.sqrt(22.5 * eps * bvps)
+
+    target_mean = _safe_float(info.get("targetMeanPrice"))
+    candidates = [v for v in (dcf_val, graham_val, target_mean) if v is not None and v > 0]
+    intrinsic = dcf_val if dcf_val is not None else (sum(candidates) / len(candidates) if candidates else None)
+
+    mos_pct = None
+    val_status = "UNAVAILABLE"
+    if intrinsic and current_price and intrinsic > 0 and current_price > 0:
+        mos_pct = round(((intrinsic - current_price) / intrinsic) * 100.0, 2)
+        if mos_pct >= 15.0:
+            val_status = "UNDERVALUED"
+        elif mos_pct >= -15.0:
+            val_status = "FAIR"
+        else:
+            val_status = "OVERVALUED"
+
+    return {
+        "dcf_fair_value": round(intrinsic, 2) if intrinsic is not None else None,
+        "graham_number": round(graham_val, 2) if graham_val is not None else None,
+        "margin_of_safety_pct": mos_pct,
+        "valuation_signal": val_status,
+        "fair_value_source": "Yahoo Statement DCF / Graham" if intrinsic is not None else None,
+    }
+
+
+def _fmp_get_json(
+    stable_path: str,
+    legacy_path: Optional[str] = None,
+    params: Optional[Dict[str, Any]] = None,
+) -> Optional[Any]:
+    """Fetches JSON from FMP preferring /stable/ and falling back cleanly to legacy paths."""
+    api_key = (getattr(settings, "FMP_API_KEY", "") or "").strip()
+    if not api_key:
+        return None
+
+    q = dict(params or {})
+    q["apikey"] = api_key
+    qs = urllib.parse.urlencode(q)
+    urls = [f"https://financialmodelingprep.com/stable/{stable_path}?{qs}"]
+    if legacy_path:
+        urls.append(f"https://financialmodelingprep.com/api/{legacy_path}?apikey={api_key}")
+
+    for url in urls:
+        try:
+            data = _http_get_json(url, timeout=6.0, max_retries=1)
+            if isinstance(data, list) and data:
+                return data
+            if isinstance(data, dict) and data and "Error Message" not in data:
+                return data
+        except Exception as e:
+            logger.debug("FMP endpoint unavailable (%s): %s", url.split("?")[0], e)
+            continue
+    return None
+
+
+def fetch_fmp_fundamentals(symbol: str) -> Dict[str, Any]:
+    """Fetches institutional DCF, growth, scores, and TTM metrics from FMP API."""
+    clean_sym = symbol.strip().upper()
+    if not (getattr(settings, "FMP_API_KEY", "") or "").strip():
+        return {"available": False}
+
+    def load() -> Dict[str, Any]:
+        dcf_rows = _fmp_get_json(
+            "discounted-cash-flow",
+            f"v3/discounted-cash-flow/{urllib.parse.quote(clean_sym)}",
+            {"symbol": clean_sym},
+        )
+        growth_rows = _fmp_get_json(
+            "financial-growth",
+            f"v3/financial-growth/{urllib.parse.quote(clean_sym)}",
+            {"symbol": clean_sym, "limit": 5},
+        )
+        score_rows = _fmp_get_json(
+            "financial-scores",
+            f"v4/score",
+            {"symbol": clean_sym},
+        )
+        km_rows = _fmp_get_json(
+            "key-metrics-ttm",
+            f"v3/key-metrics-ttm/{urllib.parse.quote(clean_sym)}",
+            {"symbol": clean_sym},
+        )
+        ratio_rows = _fmp_get_json(
+            "ratios-ttm",
+            f"v3/ratios-ttm/{urllib.parse.quote(clean_sym)}",
+            {"symbol": clean_sym},
+        )
+
+        out: Dict[str, Any] = {"symbol": clean_sym, "provider": "FMP"}
+
+        if isinstance(dcf_rows, list) and dcf_rows:
+            d0 = dcf_rows[0]
+            dcf_val = _safe_float(d0.get("dcf"))
+            stk_p = _safe_float(d0.get("Stock Price") or d0.get("stockPrice"))
+            out["dcf_fair_value"] = round(dcf_val, 2) if dcf_val is not None else None
+            out["fmp_stock_price"] = stk_p
+            if dcf_val and stk_p and dcf_val > 0 and stk_p > 0:
+                mos = round(((dcf_val - stk_p) / dcf_val) * 100.0, 2)
+                out["margin_of_safety_pct"] = mos
+                out["valuation_signal"] = (
+                    "UNDERVALUED" if mos >= 15.0 else ("FAIR" if mos >= -15.0 else "OVERVALUED")
+                )
+
+        if isinstance(growth_rows, list) and growth_rows:
+            g0 = growth_rows[0]
+            out["revenue_growth_latest"] = _safe_float(g0.get("revenueGrowth"))
+            out["net_income_growth_latest"] = _safe_float(g0.get("netIncomeGrowth"))
+            out["eps_growth_latest"] = _safe_float(g0.get("epsgrowth") or g0.get("epsdilutedGrowth"))
+            out["fcf_growth_latest"] = _safe_float(g0.get("freeCashFlowGrowth"))
+            # FMP provides total 3Y/5Y per-share growth; convert to annualized CAGR if >-1
+            def _to_cagr(total_g: Optional[float], yrs: int) -> Optional[float]:
+                if total_g is None or total_g <= -0.99:
+                    return None
+                return round(((1.0 + total_g) ** (1.0 / yrs)) - 1.0, 4)
+
+            rev_3y_raw = _safe_float(g0.get("threeYRevenueGrowthPerShare"))
+            rev_5y_raw = _safe_float(g0.get("fiveYRevenueGrowthPerShare"))
+            ni_3y_raw = _safe_float(g0.get("threeYNetIncomeGrowthPerShare"))
+            ocf_3y_raw = _safe_float(g0.get("threeYOperatingCFGrowthPerShare"))
+            out["revenue_cagr_3y"] = _to_cagr(rev_3y_raw, 3)
+            out["revenue_cagr_5y"] = _to_cagr(rev_5y_raw, 5)
+            out["net_income_cagr_3y"] = _to_cagr(ni_3y_raw, 3)
+            out["fcf_cagr_3y"] = _to_cagr(ocf_3y_raw, 3) or _safe_float(g0.get("freeCashFlowGrowth"))
+            div_5y_g = _safe_float(g0.get("fiveYDividendperShareGrowthPerShare"))
+            out["dividend_growth_5y_cagr"] = _to_cagr(div_5y_g, 5)
+
+        if isinstance(score_rows, list) and score_rows:
+            s0 = score_rows[0]
+            p_raw = s0.get("piotroskiScore")
+            out["piotroski_f_score"] = int(p_raw) if p_raw is not None else None
+            z_raw = _safe_float(s0.get("altmanZScore"))
+            out["altman_z_score"] = round(z_raw, 2) if z_raw is not None else None
+
+        if isinstance(km_rows, list) and km_rows:
+            k0 = km_rows[0]
+            out["roic"] = _safe_float(k0.get("returnOnInvestedCapitalTTM") or k0.get("roicTTM"))
+            out["roe"] = _safe_float(k0.get("returnOnEquityTTM") or k0.get("roeTTM"))
+            out["fcf_yield"] = _safe_float(k0.get("freeCashFlowYieldTTM"))
+            out["graham_number"] = _safe_float(k0.get("grahamNumberTTM"))
+
+        if isinstance(ratio_rows, list) and ratio_rows:
+            r0 = ratio_rows[0]
+            out["trailing_pe"] = _safe_float(r0.get("priceToEarningsRatioTTM") or r0.get("peRatioTTM"))
+            out["price_to_book"] = _sane_price_to_book(_safe_float(r0.get("priceToBookRatioTTM")))
+            out["debt_to_equity"] = _safe_float(r0.get("debtToEquityRatioTTM") or r0.get("debtEquityRatioTTM"))
+            out["interest_coverage"] = _safe_float(r0.get("interestCoverageRatioTTM") or r0.get("interestCoverageTTM"))
+            dy = _safe_float(r0.get("dividendYieldTTM") or r0.get("dividendYielTTM"))
+            out["dividend_yield"] = dy * 100.0 if dy is not None and dy < 0.35 else dy
+            out["payout_ratio"] = _safe_float(r0.get("dividendPayoutRatioTTM") or r0.get("payoutRatioTTM"))
+            out["net_profit_margin"] = _safe_float(r0.get("netProfitMarginTTM"))
+
+        has_any = any(
+            out.get(k) is not None
+            for k in ("dcf_fair_value", "piotroski_f_score", "altman_z_score", "roic", "revenue_cagr_3y")
+        )
+        out["available"] = has_any
+        return out
+
+    try:
+        return _cached(f"fmp:{clean_sym}", load, ttl=3600.0)
+    except Exception as e:
+        logger.debug("FMP cached fetch failed for %s: %s", clean_sym, e)
+        return {"symbol": clean_sym, "available": False}
 
 
 def _sane_price_to_book(value: Optional[float]) -> Optional[float]:
@@ -181,9 +510,10 @@ def _format_sharia_reference_block(symbol: str, reference_status: Dict[str, Any]
 
 
 def fetch_stock_fundamentals(yahoo_symbol: str) -> Dict[str, Any]:
-    """Fetches valuation + balance sheet/income statement data for one stock."""
+    """Fetches institutional FMP fundamentals + Yahoo Finance financial statements fallback."""
 
     def load() -> Dict[str, Any]:
+        fmp_data = fetch_fmp_fundamentals(yahoo_symbol)
         ticker = yf.Ticker(yahoo_symbol)
 
         info: Dict[str, Any] = {}
@@ -192,7 +522,7 @@ def fetch_stock_fundamentals(yahoo_symbol: str) -> Dict[str, Any]:
         except Exception as e:
             logger.warning("yfinance info failed for %s: %s", yahoo_symbol, e)
 
-        balance_sheet = income = None
+        balance_sheet = income = cashflow = None
         try:
             balance_sheet = ticker.balance_sheet
         except Exception as e:
@@ -201,6 +531,10 @@ def fetch_stock_fundamentals(yahoo_symbol: str) -> Dict[str, Any]:
             income = ticker.income_stmt
         except Exception as e:
             logger.warning("yfinance income_stmt failed for %s: %s", yahoo_symbol, e)
+        try:
+            cashflow = ticker.cashflow
+        except Exception as e:
+            logger.warning("yfinance cashflow failed for %s: %s", yahoo_symbol, e)
 
         period = None
         try:
@@ -209,31 +543,110 @@ def fetch_stock_fundamentals(yahoo_symbol: str) -> Dict[str, Any]:
         except Exception:
             period = None
 
+        current_price = _safe_float(info.get("currentPrice") or info.get("regularMarketPrice") or fmp_data.get("fmp_stock_price"))
+        rev_series = _statement_series(income, ["Total Revenue", "Operating Revenue"], 5)
+        ni_series = _statement_series(income, ["Net Income", "Net Income Common Stockholders"], 5)
+        eps_series = _statement_series(income, ["Diluted EPS", "Basic EPS"], 5)
+        fcf_series = _statement_series(cashflow, ["Free Cash Flow"], 5)
+        ocf_curr = _first_row(cashflow, ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"])
+        fcf_curr = _safe_float(info.get("freeCashflow")) or (fcf_series[0] if fcf_series else None)
+        total_assets = _first_row(balance_sheet, ["Total Assets"])
+        total_debt = _first_row(balance_sheet, ["Total Debt"])
+        cash_eq = _first_row(balance_sheet, ["Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments"])
+        equity = _first_row(balance_sheet, ["Stockholders Equity", "Common Stock Equity"])
+        ebit = _first_row(income, ["EBIT", "Operating Income"])
+        int_exp = _first_row(income, ["Interest Expense", "Interest Expense Non Operating"])
+        shares = _safe_float(info.get("sharesOutstanding")) or _first_row(balance_sheet, ["Ordinary Shares Number", "Share Issued"])
+
+        # Deterministic fallbacks for institutional metrics
+        rev_cagr_3y = fmp_data.get("revenue_cagr_3y") or _calc_cagr_from_series(rev_series[:4])
+        rev_cagr_5y = fmp_data.get("revenue_cagr_5y") or (_calc_cagr_from_series(rev_series) if len(rev_series) >= 4 else None)
+        ni_cagr_3y = fmp_data.get("net_income_cagr_3y") or _calc_cagr_from_series(ni_series[:4])
+        eps_cagr_3y = fmp_data.get("eps_growth_latest") or _calc_cagr_from_series(eps_series[:4])
+        fcf_cagr_3y = fmp_data.get("fcf_cagr_3y") or _calc_cagr_from_series(fcf_series[:4])
+
+        piotroski = fmp_data.get("piotroski_f_score")
+        if piotroski is None:
+            piotroski = _compute_piotroski_f_score(income, balance_sheet, cashflow)
+
+        market_cap = _safe_float(info.get("marketCap"))
+        altman_z = fmp_data.get("altman_z_score")
+        if altman_z is None:
+            altman_z = _compute_altman_z_score(income, balance_sheet, market_cap)
+
+        roic = fmp_data.get("roic")
+        if roic is None and ebit is not None and equity is not None:
+            invested_cap = (total_debt or 0.0) + equity - (cash_eq or 0.0)
+            if invested_cap > 0:
+                nopat = ebit * 0.78  # Effective statutory tax rate approximation
+                roic = nopat / invested_cap
+
+        int_cov = fmp_data.get("interest_coverage")
+        if int_cov is None and ebit is not None and int_exp is not None and abs(int_exp) > 0:
+            int_cov = ebit / abs(int_exp)
+
+        net_debt = (total_debt - (cash_eq or 0.0)) if total_debt is not None else None
+        dcf_fallback = _compute_statement_dcf_and_graham(
+            current_price, info, fcf_curr, net_debt, shares, rev_cagr_3y or _safe_float(info.get("revenueGrowth"))
+        )
+
+        dcf_fair = fmp_data.get("dcf_fair_value") or dcf_fallback.get("dcf_fair_value")
+        mos_pct = fmp_data.get("margin_of_safety_pct")
+        val_sig = fmp_data.get("valuation_signal")
+        if dcf_fair and current_price and dcf_fair > 0 and current_price > 0 and mos_pct is None:
+            mos_pct = round(((dcf_fair - current_price) / dcf_fair) * 100.0, 2)
+            val_sig = "UNDERVALUED" if mos_pct >= 15.0 else ("FAIR" if mos_pct >= -15.0 else "OVERVALUED")
+        elif val_sig is None:
+            val_sig = dcf_fallback.get("valuation_signal", "UNAVAILABLE")
+
+        div_yield = fmp_data.get("dividend_yield") or _safe_float(info.get("dividendYield"))
+        div_5y_avg = _safe_float(info.get("fiveYearAvgDividendYield"))
+        payout_ratio = fmp_data.get("payout_ratio") or _safe_float(info.get("payoutRatio"))
+
         result = {
             "symbol": yahoo_symbol,
             "name": info.get("longName") or info.get("shortName"),
             "sector": info.get("sector"),
             "industry": info.get("industry"),
             "currency": info.get("financialCurrency") or info.get("currency"),
-            "market_cap": _safe_float(info.get("marketCap")),
-            "trailing_pe": _safe_float(info.get("trailingPE")),
+            "current_price": current_price,
+            "market_cap": market_cap,
+            "trailing_pe": fmp_data.get("trailing_pe") or _safe_float(info.get("trailingPE")),
             "forward_pe": _safe_float(info.get("forwardPE")),
-            "price_to_book": _sane_price_to_book(_safe_float(info.get("priceToBook"))),
-            "roe": _safe_float(info.get("returnOnEquity")),
-            "profit_margin": _safe_float(info.get("profitMargins")),
-            "revenue_growth": _safe_float(info.get("revenueGrowth")),
-            "dividend_yield": _safe_float(info.get("dividendYield")),
-            "free_cash_flow": _safe_float(info.get("freeCashflow")),
-            "debt_to_equity": _safe_float(info.get("debtToEquity")),
-            "total_assets": _first_row(balance_sheet, ["Total Assets"]),
-            "total_debt": _first_row(balance_sheet, ["Total Debt"]),
-            "total_revenue": _first_row(income, ["Total Revenue", "Operating Revenue"]),
+            "price_to_book": fmp_data.get("price_to_book") or _sane_price_to_book(_safe_float(info.get("priceToBook"))),
+            "roe": fmp_data.get("roe") or _safe_float(info.get("returnOnEquity")),
+            "roic": roic,
+            "profit_margin": fmp_data.get("net_profit_margin") or _safe_float(info.get("profitMargins")),
+            "revenue_growth": fmp_data.get("revenue_growth_latest") or _safe_float(info.get("revenueGrowth")),
+            "revenue_cagr_3y": rev_cagr_3y,
+            "revenue_cagr_5y": rev_cagr_5y,
+            "net_income_cagr_3y": ni_cagr_3y,
+            "eps_cagr_3y": eps_cagr_3y,
+            "fcf_cagr_3y": fcf_cagr_3y,
+            "dividend_yield": div_yield,
+            "dividend_5y_avg": div_5y_avg,
+            "payout_ratio": payout_ratio,
+            "free_cash_flow": fcf_curr,
+            "operating_cash_flow": ocf_curr,
+            "debt_to_equity": fmp_data.get("debt_to_equity") or _safe_float(info.get("debtToEquity")),
+            "interest_coverage": round(int_cov, 2) if int_cov is not None else None,
+            "piotroski_f_score": piotroski,
+            "altman_z_score": altman_z,
+            "dcf_fair_value": dcf_fair,
+            "graham_number": fmp_data.get("graham_number") or dcf_fallback.get("graham_number"),
+            "margin_of_safety_pct": mos_pct,
+            "valuation_signal": val_sig,
+            "fair_value_source": "FMP DCF" if fmp_data.get("dcf_fair_value") is not None else dcf_fallback.get("fair_value_source"),
+            "fmp_used": bool(fmp_data.get("available")),
+            "total_assets": total_assets,
+            "total_debt": total_debt,
+            "total_revenue": rev_series[0] if rev_series else None,
             "interest_income": _first_row(
                 income, ["Interest Income", "Interest Income Non Operating"]
             ),
             "statement_period": period,
         }
-        core = ("market_cap", "trailing_pe", "total_assets", "total_revenue", "roe")
+        core = ("market_cap", "trailing_pe", "total_assets", "total_revenue", "roe", "piotroski_f_score")
         result["available"] = any(result.get(k) is not None for k in core)
         return result
 
@@ -322,22 +735,28 @@ def _format_sharia_block(screen: Dict[str, Any]) -> str:
 
 def _format_stock_block(f: Dict[str, Any], sharia: Optional[Dict[str, Any]]) -> str:
     cur = f.get("currency") or "market currency"
+    provider_label = "FMP Institutional + Yahoo Statements" if f.get("fmp_used") else "Yahoo Finance Statements + Deterministic DCF/Piotroski Engine"
     lines = [
-        f"FUNDAMENTAL DATA for {f.get('symbol')} (source: Yahoo Finance statements; "
+        f"FUNDAMENTAL DATA for {f.get('symbol')} (source: {provider_label}; "
         f"latest reported period: {f.get('statement_period') or 'UNAVAILABLE'}):",
         f"- Company: {f.get('name') or 'UNAVAILABLE'} | Sector: {f.get('sector') or 'UNAVAILABLE'} "
         f"| Industry: {f.get('industry') or 'UNAVAILABLE'}",
-        f"- Market cap: {_fmt_big(f.get('market_cap'))} {cur}",
-        f"- P/E trailing: {_fmt_num(f.get('trailing_pe'))} | P/E forward: {_fmt_num(f.get('forward_pe'))} "
-        f"| P/B: {_fmt_num(f.get('price_to_book'))}",
-        f"- ROE: {_fmt_pct(f.get('roe'))} | Profit margin: {_fmt_pct(f.get('profit_margin'))} "
-        f"| Revenue growth: {_fmt_pct(f.get('revenue_growth'))}",
-        f"- Debt/Equity: {_fmt_num(f.get('debt_to_equity'))} | Free cash flow: {_fmt_big(f.get('free_cash_flow'))}",
-        f"- Total assets: {_fmt_big(f.get('total_assets'))} | Total debt: {_fmt_big(f.get('total_debt'))} "
-        f"| Revenue: {_fmt_big(f.get('total_revenue'))}",
-        f"- Dividend yield: {_fmt_num(f.get('dividend_yield'), 2, '%')} (Yahoo-reported, percent)",
-        "- Peer/industry benchmark multiples, SEC filings text, and analyst consensus are "
-        "UNAVAILABLE: do not quote them.",
+        f"- Market cap: {_fmt_big(f.get('market_cap'))} {cur} | Current Ref Price: {_fmt_num(f.get('current_price'))} {cur}",
+        f"- Intrinsic / DCF Fair Value: {_fmt_num(f.get('dcf_fair_value'))} {cur} ({f.get('fair_value_source') or 'N/A'}) "
+        f"| Margin of Safety: {_fmt_num(f.get('margin_of_safety_pct'), 2, '%')} | Valuation Status: {f.get('valuation_signal') or 'UNAVAILABLE'}",
+        f"- Financial Health: Piotroski F-Score={f.get('piotroski_f_score') if f.get('piotroski_f_score') is not None else 'UNAVAILABLE'}/9 "
+        f"| Altman Z-Score={_fmt_num(f.get('altman_z_score'))}",
+        f"- Multi-Year CAGR Growth: Revenue 3Y={_fmt_pct(f.get('revenue_cagr_3y'))} | Revenue 5Y={_fmt_pct(f.get('revenue_cagr_5y'))} "
+        f"| Net Income 3Y={_fmt_pct(f.get('net_income_cagr_3y'))} | EPS 3Y/Latest={_fmt_pct(f.get('eps_cagr_3y'))} | FCF Growth={_fmt_pct(f.get('fcf_cagr_3y'))}",
+        f"- Valuation Multiples: P/E trailing={_fmt_num(f.get('trailing_pe'))} | P/E forward={_fmt_num(f.get('forward_pe'))} "
+        f"| P/B={_fmt_num(f.get('price_to_book'))} | Graham Number={_fmt_num(f.get('graham_number'))}",
+        f"- Quality & Solvency: ROIC={_fmt_pct(f.get('roic'))} | ROE={_fmt_pct(f.get('roe'))} "
+        f"| Net Margin={_fmt_pct(f.get('profit_margin'))} | Debt/Equity={_fmt_num(f.get('debt_to_equity'))} | Interest Coverage={_fmt_num(f.get('interest_coverage'))}x",
+        f"- Dividend Profile: Current Yield={_fmt_num(f.get('dividend_yield'), 2, '%')} "
+        f"| 5Y Avg Yield={_fmt_num(f.get('dividend_5y_avg'), 2, '%')} | Payout Ratio={_fmt_pct(f.get('payout_ratio'))}",
+        f"- Cash Flow & Scale: Free Cash Flow={_fmt_big(f.get('free_cash_flow'))} | Total Assets={_fmt_big(f.get('total_assets'))} "
+        f"| Total Debt={_fmt_big(f.get('total_debt'))} | Revenue={_fmt_big(f.get('total_revenue'))}",
+        "- Peer benchmarks not supplied in this block are UNAVAILABLE; do not invent numbers.",
     ]
     if sharia is not None:
         lines.append(_format_sharia_block(sharia))
@@ -432,7 +851,7 @@ def _format_etf_block(f: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Crypto via CoinGecko / DefiLlama / Binance Futures
+# Crypto Long-Term Fundamentals via CoinGecko + DefiLlama (Spot & Tokenomics Only)
 # ---------------------------------------------------------------------------
 
 
@@ -444,55 +863,99 @@ def _defillama_protocols() -> List[Dict[str, Any]]:
     )
 
 
+def _defillama_protocol_fees(slug: str) -> Dict[str, Optional[float]]:
+    """Best-effort protocol revenue and daily fees lookup from DefiLlama."""
+    if not slug:
+        return {"daily_fees_usd": None, "daily_revenue_usd": None, "total_30d_fees_usd": None}
+
+    def load_fees() -> Dict[str, Optional[float]]:
+        fees_val = None
+        rev_val = None
+        total30_val = None
+        try:
+            f_data = _http_get_json(
+                f"https://api.llama.fi/summary/fees/{urllib.parse.quote(slug)}?dataType=dailyFees",
+                timeout=6.0,
+                max_retries=1,
+            )
+            if isinstance(f_data, dict):
+                fees_val = _safe_float(f_data.get("total24h"))
+                total30_val = _safe_float(f_data.get("total30d"))
+        except Exception as e:
+            logger.debug("DefiLlama fees unavailable for %s: %s", slug, e)
+        try:
+            r_data = _http_get_json(
+                f"https://api.llama.fi/summary/fees/{urllib.parse.quote(slug)}?dataType=dailyRevenue",
+                timeout=6.0,
+                max_retries=1,
+            )
+            if isinstance(r_data, dict):
+                rev_val = _safe_float(r_data.get("total24h"))
+        except Exception as e:
+            logger.debug("DefiLlama revenue unavailable for %s: %s", slug, e)
+        return {
+            "daily_fees_usd": fees_val,
+            "daily_revenue_usd": rev_val,
+            "total_30d_fees_usd": total30_val,
+        }
+
+    return _cached(f"defillama_fees:{slug}", load_fees, ttl=_DEFILLAMA_TTL)
+
+
 def _defillama_for(cg_id: str) -> Optional[Dict[str, Any]]:
     try:
         for p in _defillama_protocols():
             if p.get("gecko_id") == cg_id and _safe_float(p.get("tvl")) is not None:
+                slug = str(p.get("slug") or "")
+                fees_info = _defillama_protocol_fees(slug) if slug else {}
                 return {
                     "name": p.get("name"),
+                    "slug": slug,
                     "category": p.get("category"),
                     "tvl": _safe_float(p.get("tvl")),
                     "change_1d": _safe_float(p.get("change_1d")),
                     "change_7d": _safe_float(p.get("change_7d")),
                     "chains": p.get("chains"),
+                    "daily_fees_usd": fees_info.get("daily_fees_usd"),
+                    "daily_revenue_usd": fees_info.get("daily_revenue_usd"),
+                    "total_30d_fees_usd": fees_info.get("total_30d_fees_usd"),
                 }
     except Exception as e:
         logger.warning("DefiLlama lookup failed for %s: %s", cg_id, e)
     return None
 
 
-def _binance_futures(base: str) -> Optional[Dict[str, Any]]:
-    """Funding rate and open interest (public endpoints; supports micro-tokens like 1000PEPE)."""
-    raw_base = base.upper()
-    candidate_symbols = [f"{raw_base}USDT"]
-    # Common Binance micro-cap futures multiplier prefix
-    if not raw_base.startswith("1000"):
-        candidate_symbols.append(f"1000{raw_base}USDT")
+def _evaluate_token_dilution(
+    market_cap: Optional[float], fdv: Optional[float], circ: Optional[float], max_sup: Optional[float]
+) -> Dict[str, Any]:
+    """Evaluates long-term token unlock / supply dilution risk from Market Cap vs FDV."""
+    mcap_fdv = None
+    if market_cap and fdv and fdv > 0:
+        mcap_fdv = round(market_cap / fdv, 4)
 
-    for sym in candidate_symbols:
-        try:
-            prem = _http_get_json(
-                f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={sym}", timeout=6.0, max_retries=1
-            )
-            oi = _http_get_json(
-                f"https://fapi.binance.com/fapi/v1/openInterest?symbol={sym}", timeout=6.0, max_retries=1
-            )
-            return {
-                "futures_symbol": sym,
-                "funding_rate": _safe_float(prem.get("lastFundingRate")),
-                "mark_price": _safe_float(prem.get("markPrice")),
-                "open_interest": _safe_float(oi.get("openInterest")),
-            }
-        except Exception as e:
-            logger.debug("Binance futures lookup failed for %s: %s", sym, e)
-            continue
+    supply_issued = None
+    if circ and max_sup and max_sup > 0:
+        supply_issued = round(circ / max_sup, 4)
 
-    logger.info("Binance futures data unavailable for %s (tried %s)", base, candidate_symbols)
-    return None
+    dilution_risk = "UNAVAILABLE"
+    ratio = mcap_fdv if mcap_fdv is not None else supply_issued
+    if ratio is not None:
+        if ratio >= 0.80:
+            dilution_risk = "LOW (Mayoritas suplai beredar; risiko dilusi rendah)"
+        elif ratio >= 0.50:
+            dilution_risk = "MODERATE (Perhatikan jadwal unlock token menengah)"
+        else:
+            dilution_risk = "HIGH (FDV jauh di atas Market Cap; risiko dilusi tinggi)"
+
+    return {
+        "mcap_to_fdv_ratio": mcap_fdv,
+        "supply_issued_pct": supply_issued,
+        "dilution_risk": dilution_risk,
+    }
 
 
 def fetch_crypto_fundamentals(symbol: str) -> Dict[str, Any]:
-    """Tokenomics + developer activity (CoinGecko), TVL (DefiLlama), derivatives (Binance)."""
+    """Long-term Tokenomics + Supply Dilution (CoinGecko) and TVL / Protocol Revenue (DefiLlama)."""
     base = symbol.strip().upper().split("/")[0].split("-")[0]
 
     def load() -> Dict[str, Any]:
@@ -510,19 +973,30 @@ def fetch_crypto_fundamentals(symbol: str) -> Dict[str, Any]:
         except Exception as e:
             logger.warning("Crypto fundamentals failed for %s: %s", symbol, e)
             return {"symbol": symbol, "available": False}
+
         md = data.get("market_data", {}) or {}
         dev = data.get("developer_data", {}) or {}
+        mcap = _safe_float((md.get("market_cap") or {}).get("usd"))
+        fdv = _safe_float((md.get("fully_diluted_valuation") or {}).get("usd"))
+        circ = _safe_float(md.get("circulating_supply"))
+        tot = _safe_float(md.get("total_supply"))
+        mx = _safe_float(md.get("max_supply"))
+        dilution = _evaluate_token_dilution(mcap, fdv, circ, mx)
+
         return {
             "symbol": symbol,
             "available": True,
             "cg_id": cg_id,
             "name": data.get("name"),
             "categories": [c for c in (data.get("categories") or []) if c][:4],
-            "market_cap": _safe_float((md.get("market_cap") or {}).get("usd")),
-            "fdv": _safe_float((md.get("fully_diluted_valuation") or {}).get("usd")),
-            "circulating_supply": _safe_float(md.get("circulating_supply")),
-            "total_supply": _safe_float(md.get("total_supply")),
-            "max_supply": _safe_float(md.get("max_supply")),
+            "market_cap": mcap,
+            "fdv": fdv,
+            "circulating_supply": circ,
+            "total_supply": tot,
+            "max_supply": mx,
+            "mcap_to_fdv_ratio": dilution["mcap_to_fdv_ratio"],
+            "supply_issued_pct": dilution["supply_issued_pct"],
+            "dilution_risk": dilution["dilution_risk"],
             "ath_change_pct": _safe_float((md.get("ath_change_percentage") or {}).get("usd")),
             "change_7d": _safe_float(md.get("price_change_percentage_7d")),
             "change_30d": _safe_float(md.get("price_change_percentage_30d")),
@@ -537,88 +1011,76 @@ def fetch_crypto_fundamentals(symbol: str) -> Dict[str, Any]:
     except Exception as e:
         logger.warning("Crypto fundamentals failed for %s: %s", symbol, e)
         result = {"symbol": symbol, "available": False}
-    result = dict(result)
-    result["futures"] = _cached(f"futures:{base}", lambda: _binance_futures(base), ttl=120.0)
-    return result
+    return dict(result)
 
 
 def _format_crypto_block(f: Dict[str, Any]) -> str:
     if not f.get("available"):
         return (
-            f"FUNDAMENTAL / ON-CHAIN DATA for {f.get('symbol')}: UNAVAILABLE "
+            f"FUNDAMENTAL / TOKENOMICS DATA for {f.get('symbol')}: UNAVAILABLE "
             "(CoinGecko lookup failed). Do not quote tokenomics, TVL, or on-chain metrics."
         )
     circ, mx, tot = f.get("circulating_supply"), f.get("max_supply"), f.get("total_supply")
-    circ_pct = (circ / mx) if circ and mx else None
     lines = [
-        f"FUNDAMENTAL / ON-CHAIN DATA for {f.get('symbol')} "
-        "(sources: CoinGecko, DefiLlama, Binance Futures; point-in-time):",
+        f"FUNDAMENTAL / TOKENOMICS DATA for {f.get('symbol')} "
+        "(sources: CoinGecko, DefiLlama; long-term investment focus):",
         f"- Name: {f.get('name')} | Categories: {', '.join(f.get('categories') or []) or 'UNAVAILABLE'}",
-        f"- Market cap: {_fmt_usd(f.get('market_cap'))} | FDV: {_fmt_usd(f.get('fdv'))}",
+        f"- Market cap: {_fmt_usd(f.get('market_cap'))} | FDV: {_fmt_usd(f.get('fdv'))} "
+        f"| MCap/FDV Ratio: {_fmt_pct(f.get('mcap_to_fdv_ratio'))}",
+        f"- Supply Dilution Risk: {f.get('dilution_risk') or 'UNAVAILABLE'}",
         f"- Circulating supply: {_fmt_big(circ)} | Total supply: {_fmt_big(tot)} | "
-        f"Max supply: {_fmt_big(mx)} | Circulating/Max: {_fmt_pct(circ_pct)}",
-        f"- Price change 7d: {_fmt_num(f.get('change_7d'), 2, '%')} | 30d: "
-        f"{_fmt_num(f.get('change_30d'), 2, '%')} | From ATH: {_fmt_num(f.get('ath_change_pct'), 1, '%')}",
-        f"- GitHub (CoinGecko): commits 4w={f.get('commits_4w') if f.get('commits_4w') is not None else 'UNAVAILABLE'}, "
+        f"Max supply: {_fmt_big(mx)} | Circulating/Max: {_fmt_pct(f.get('supply_issued_pct'))}",
+        f"- Long-Term Distance from ATH: {_fmt_num(f.get('ath_change_pct'), 1, '%')} "
+        f"| 30d Change: {_fmt_num(f.get('change_30d'), 2, '%')}",
+        f"- GitHub Dev Activity (CoinGecko): commits 4w={f.get('commits_4w') if f.get('commits_4w') is not None else 'UNAVAILABLE'}, "
         f"stars={f.get('stars') if f.get('stars') is not None else 'UNAVAILABLE'}, "
         f"forks={f.get('forks') if f.get('forks') is not None else 'UNAVAILABLE'}",
     ]
     llama = f.get("defillama")
     if llama:
         lines.append(
-            f"- DefiLlama TVL: {_fmt_usd(llama.get('tvl'))} (1d {_fmt_num(llama.get('change_1d'), 2, '%')}, "
-            f"7d {_fmt_num(llama.get('change_7d'), 2, '%')}); category={llama.get('category')}"
+            f"- DefiLlama TVL & Revenue: TVL={_fmt_usd(llama.get('tvl'))} (1d {_fmt_num(llama.get('change_1d'), 2, '%')}, "
+            f"7d {_fmt_num(llama.get('change_7d'), 2, '%')}) | Daily Fees={_fmt_usd(llama.get('daily_fees_usd'))} "
+            f"| Daily Revenue={_fmt_usd(llama.get('daily_revenue_usd'))}; category={llama.get('category')}"
         )
     else:
-        lines.append("- DefiLlama TVL: UNAVAILABLE (asset is not a tracked DeFi protocol or lookup failed)")
-    fut = f.get("futures")
-    if fut:
-        lines.append(
-            f"- Binance perpetual: funding rate={_fmt_num(fut.get('funding_rate') and fut['funding_rate'] * 100, 4, '%')}, "
-            f"open interest={_fmt_big(fut.get('open_interest'))} units"
-        )
-    else:
-        lines.append("- Binance perpetual funding/open interest: UNAVAILABLE")
+        lines.append("- DefiLlama TVL & Protocol Revenue: UNAVAILABLE (asset is L1 store-of-value or not tracked as DeFi protocol)")
     lines.append(
-        "- Whale wallet movements, exchange net-flows, and holder distribution: UNAVAILABLE "
-        "(no Glassnode / Whale Alert / Etherscan integration). State this explicitly; do NOT "
-        "invent whale transactions, inflow/outflow numbers, or addresses."
+        "- Futures Funding Rate & Open Interest: NOT USED (long-term investment focus excludes leverage derivatives)."
     )
     return "\n".join(lines)
 
 
 def _format_onchain_block(symbol: str, f: Dict[str, Any]) -> str:
-    """Formats derivatives + DeFi metrics from existing providers for the on-chain analyst."""
-    base = symbol.strip().upper().split("/")[0].split("-")[0]
+    """Formats long-term tokenomics, MCap/FDV dilution, supply, and DefiLlama TVL/revenue metrics."""
     lines = [
-        f"ON-CHAIN / DERIVATIVES CONTEXT for {symbol} (no new APIs; uses data already fetched by backend):",
-        "- Whale wallet movements, exchange net-flows, active addresses, TX count, stablecoin mint/burn: UNAVAILABLE "
-        "(no Glassnode / Whale Alert / Etherscan / stablecoin-issuer integration). Do not invent these metrics.",
+        f"ON-CHAIN & TOKENOMICS CONTEXT for {symbol} (sources: CoinGecko & DefiLlama; long-term investing):",
+        f"- Market Cap: {_fmt_usd(f.get('market_cap'))} | Fully Diluted Valuation (FDV): {_fmt_usd(f.get('fdv'))}",
+        f"- MCap / FDV Ratio: {_fmt_pct(f.get('mcap_to_fdv_ratio'))} | Dilution Risk Assessment: {f.get('dilution_risk') or 'UNAVAILABLE'}",
+        f"- Circulating / Max Supply: {_fmt_pct(f.get('supply_issued_pct'))} "
+        f"({ _fmt_big(f.get('circulating_supply')) } / { _fmt_big(f.get('max_supply')) })",
+        f"- Distance from All-Time High (ATH): {_fmt_num(f.get('ath_change_pct'), 1, '%')}",
     ]
-
-    fut = f.get("futures")
-    if fut:
-        lines.append(
-            f"- Binance perpetual (public): funding_rate={_fmt_num(fut.get('funding_rate') and fut['funding_rate'] * 100, 4, '%')}, "
-            f"open_interest={_fmt_big(fut.get('open_interest'))} {base}, mark_price={_fmt_num(fut.get('mark_price'))}"
-        )
-    else:
-        lines.append("- Binance perpetual funding rate / open interest: UNAVAILABLE")
 
     llama = f.get("defillama")
     if llama:
         lines.append(
-            f"- DefiLlama TVL (if asset is a tracked DeFi protocol): {_fmt_usd(llama.get('tvl'))} "
+            f"- DefiLlama TVL: {_fmt_usd(llama.get('tvl'))} "
             f"(1d {_fmt_num(llama.get('change_1d'), 2, '%')}, 7d {_fmt_num(llama.get('change_7d'), 2, '%')}); "
             f"category={llama.get('category') or 'UNAVAILABLE'}; chains={', '.join(llama.get('chains') or []) or 'UNAVAILABLE'}"
         )
+        lines.append(
+            f"- DefiLlama Protocol Economics: Daily Fees={_fmt_usd(llama.get('daily_fees_usd'))} | "
+            f"Daily Protocol Revenue={_fmt_usd(llama.get('daily_revenue_usd'))} | 30d Fees={_fmt_usd(llama.get('total_30d_fees_usd'))}"
+        )
     else:
-        lines.append("- DefiLlama TVL: UNAVAILABLE (asset is not a tracked DeFi protocol or lookup failed)")
+        lines.append("- DefiLlama TVL & Protocol Revenue: UNAVAILABLE (asset is not a tracked DeFi protocol)")
 
-    lines.append(
-        "- Use only the metrics above and the supplied market/news context. "
-        "Do not present exchange flows, whale transfers, active addresses, or stablecoin flows as available."
-    )
+    lines.extend([
+        "- Whale wallet movements, exchange net-flows, active addresses, TX count, stablecoin mint/burn: UNAVAILABLE "
+        "(no Glassnode / Whale Alert / Etherscan integration). Do not invent these metrics.",
+        "- Futures leverage / perpetual funding rate / open interest intentionally excluded (non-speculative wealth compounding scope).",
+    ])
     return "\n".join(lines)
 
 
@@ -628,25 +1090,22 @@ def _format_onchain_block(symbol: str, f: Dict[str, Any]) -> str:
 
 
 def get_fundamental_context(market: str, symbol: str) -> Dict[str, Any]:
-    """Builds the real-data block for a single-asset analysis.
-
-    Returns ``{"text": str, "available": bool, "sharia": Optional[dict]}``.
-    """
+    """Builds the real-data block + raw institutional metrics for single-asset research."""
     norm = _normalize_market(market)
     if norm == "crypto":
         f = fetch_crypto_fundamentals(symbol)
-        return {"text": _format_crypto_block(f), "available": bool(f.get("available")), "sharia": None, "sharia_reference": None}
+        return {"text": _format_crypto_block(f), "available": bool(f.get("available")), "sharia": None, "sharia_reference": None, "raw": f}
 
     if norm == "us_etf":
         f = fetch_etf_fundamentals(symbol)
-        return {"text": _format_etf_block(f), "available": bool(f.get("available")), "sharia": None, "sharia_reference": None}
+        return {"text": _format_etf_block(f), "available": bool(f.get("available")), "sharia": None, "sharia_reference": None, "raw": f}
 
     f = fetch_stock_fundamentals(resolve_yahoo_symbol(market, symbol))
     is_ihsg = norm == "ihsg"
     sharia_reference = get_sharia_reference_status(symbol) if is_ihsg else None
     if not f.get("available"):
         text = (
-            f"FUNDAMENTAL DATA for {symbol}: UNAVAILABLE (Yahoo Finance returned no statements). "
+            f"FUNDAMENTAL DATA for {symbol}: UNAVAILABLE (FMP & Yahoo Finance returned no statements). "
             "Do not quote valuation multiples, ratios, or financial results from memory."
         )
         if is_ihsg:
@@ -656,33 +1115,29 @@ def get_fundamental_context(market: str, symbol: str) -> Dict[str, Any]:
                 "certified Sharia-compliant."
             )
             text += "\n" + _format_sharia_reference_block(symbol, sharia_reference)
-        return {"text": text, "available": False, "sharia": None, "sharia_reference": sharia_reference}
+        return {"text": text, "available": False, "sharia": None, "sharia_reference": sharia_reference, "raw": f}
 
     sharia = evaluate_sharia_screen(f) if is_ihsg else None
     text = _format_stock_block(f, sharia)
     if sharia_reference:
         text += "\n" + _format_sharia_reference_block(symbol, sharia_reference)
-    return {"text": text, "available": True, "sharia": sharia, "sharia_reference": sharia_reference}
+    return {"text": text, "available": True, "sharia": sharia, "sharia_reference": sharia_reference, "raw": f}
 
 
 def get_onchain_context(market: str, symbol: str) -> Optional[Dict[str, Any]]:
-    """Builds a real-data block for the on-chain analyst.
-
-    Returns ``None`` for non-crypto markets. For crypto, returns
-    ``{"text": str, "available": bool}`` with derivatives and DeFi TVL data
-    already fetched by the backend (Binance Futures + DefiLlama).
-    """
+    """Builds a long-term tokenomics & DefiLlama TVL/Revenue context for the on-chain analyst."""
     if _normalize_market(market) != "crypto":
         return None
     f = fetch_crypto_fundamentals(symbol)
     return {
         "text": _format_onchain_block(symbol, f),
-        "available": bool(f.get("available") or f.get("futures") or f.get("defillama")),
+        "available": bool(f.get("available") or f.get("defillama")),
+        "raw": f,
     }
 
 
 def get_recommendation_fundamentals(market: str, symbols: List[str]) -> str:
-    """Compact per-asset real fundamentals for the recommendation scan."""
+    """Compact per-asset real fundamentals for the Quality, Value & Compounding Screener."""
     norm = _normalize_market(market)
     if not symbols:
         return ""
@@ -693,13 +1148,11 @@ def get_recommendation_fundamentals(market: str, symbols: List[str]) -> str:
             if not f.get("available"):
                 return f"- {sym}: fundamentals UNAVAILABLE"
             llama = f.get("defillama") or {}
-            fut = f.get("futures") or {}
             return (
                 f"- {sym}: mcap={_fmt_usd(f.get('market_cap'))}, FDV={_fmt_usd(f.get('fdv'))}, "
-                f"circ/max={_fmt_pct((f['circulating_supply'] / f['max_supply']) if f.get('circulating_supply') and f.get('max_supply') else None)}, "
-                f"7d={_fmt_num(f.get('change_7d'), 1, '%')}, 30d={_fmt_num(f.get('change_30d'), 1, '%')}, "
-                f"TVL={_fmt_usd(llama.get('tvl'))}, "
-                f"funding={_fmt_num(fut.get('funding_rate') and fut['funding_rate'] * 100, 4, '%')}"
+                f"MCap/FDV={_fmt_pct(f.get('mcap_to_fdv_ratio'))}, "
+                f"circ/max={_fmt_pct(f.get('supply_issued_pct'))}, "
+                f"TVL={_fmt_usd(llama.get('tvl'))}, daily_rev={_fmt_usd(llama.get('daily_revenue_usd'))}"
             )
     elif norm == "us_etf":
         def one(sym: str) -> str:
@@ -731,9 +1184,11 @@ def get_recommendation_fundamentals(market: str, symbols: List[str]) -> str:
                 return f"- {sym}: fundamentals UNAVAILABLE{suffix}"
             line = (
                 f"- {sym}: industry={f.get('industry') or 'UNAVAILABLE'}, "
-                f"mcap={_fmt_big(f.get('market_cap'))}, P/E={_fmt_num(f.get('trailing_pe'))}, "
-                f"P/B={_fmt_num(f.get('price_to_book'))}, ROE={_fmt_pct(f.get('roe'))}, "
-                f"D/E={_fmt_num(f.get('debt_to_equity'))}, rev_growth={_fmt_pct(f.get('revenue_growth'))}"
+                f"FairVal={_fmt_num(f.get('dcf_fair_value'))}, MoS={_fmt_num(f.get('margin_of_safety_pct'), 1, '%')}, "
+                f"F-Score={f.get('piotroski_f_score') if f.get('piotroski_f_score') is not None else 'UNAVAILABLE'}/9, "
+                f"ROIC={_fmt_pct(f.get('roic'))}, ROE={_fmt_pct(f.get('roe'))}, "
+                f"P/E={_fmt_num(f.get('trailing_pe'))}, DivYield={_fmt_num(f.get('dividend_yield'), 2, '%')}, "
+                f"Rev3Y_CAGR={_fmt_pct(f.get('revenue_cagr_3y'))}"
             )
             if syariah:
                 s = evaluate_sharia_screen(f)
@@ -774,7 +1229,7 @@ def get_recommendation_fundamentals(market: str, symbols: List[str]) -> str:
         pool.shutdown(wait=False, cancel_futures=True)
 
     header = (
-        "REAL FUNDAMENTAL DATA (Yahoo Finance statements / CoinGecko / DefiLlama / Binance Futures). "
+        "REAL FUNDAMENTAL DATA (FMP Institutional + Yahoo Statements / CoinGecko / DefiLlama). "
         "Any metric not listed here is UNAVAILABLE and must not be quoted from memory."
     )
     if market == "ihsg_syariah":
