@@ -92,6 +92,8 @@ export default function FinancialPlannerPage() {
   const [allocations, setAllocations] = useState<AssetAllocation | null>(null);
   const [profile, setProfile] = useState<PersonalProfile | null>(null);
   const [activeSkills, setActiveSkills] = useState<string[]>([]);
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const [recentAnalysesCount, setRecentAnalysesCount] = useState<number>(0);
   const [autoUpdatedNotice, setAutoUpdatedNotice] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -101,6 +103,9 @@ export default function FinancialPlannerPage() {
     const overview = await getPlannerOverview();
     setHealthContext(overview.context);
     setAllocations(overview.allocations);
+    if (typeof overview.context?.recent_analyses_count === "number") {
+      setRecentAnalysesCount(overview.context.recent_analyses_count);
+    }
     if (overview.personal_profile) {
       setProfile(overview.personal_profile);
     }
@@ -113,6 +118,9 @@ export default function FinancialPlannerPage() {
         setMessages(hist);
         setHealthContext(overview.context);
         setAllocations(overview.allocations);
+        if (typeof overview.context?.recent_analyses_count === "number") {
+          setRecentAnalysesCount(overview.context.recent_analyses_count);
+        }
         if (overview.personal_profile) {
           setProfile(overview.personal_profile);
         }
@@ -178,11 +186,13 @@ export default function FinancialPlannerPage() {
     setIsStreaming(true);
 
     let didUpdateProfile = false;
+    setToolStatus(null);
 
     try {
       await sendPlannerMessageStream(
         textToSend,
         (chunk: string) => {
+          setToolStatus(null);
           setMessages((prev) =>
             prev.map((msg) => (msg.id === botMsgId ? { ...msg, content: msg.content + chunk } : msg))
           );
@@ -191,10 +201,16 @@ export default function FinancialPlannerPage() {
           if (meta.active_skills?.length) {
             setActiveSkills(meta.active_skills);
           }
+          if (typeof meta.recent_analyses_count === "number") {
+            setRecentAnalysesCount(meta.recent_analyses_count);
+          }
           if (meta.profile_updated) {
             didUpdateProfile = true;
             setAutoUpdatedNotice(true);
           }
+        },
+        (statusText: string) => {
+          setToolStatus(statusText);
         }
       );
 
@@ -210,6 +226,7 @@ export default function FinancialPlannerPage() {
         )
       );
     } finally {
+      setToolStatus(null);
       setIsStreaming(false);
     }
   };
@@ -237,8 +254,16 @@ export default function FinancialPlannerPage() {
                 </span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
-                  <span>Real-Time Web Search</span>
+                  <span>Real-Time Web &amp; Data Tools</span>
                 </span>
+                {recentAnalysesCount > 0 && (
+                  <Link
+                    href="/investment-research"
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
+                  >
+                    {recentAnalysesCount} Analisis Swarm Terhubung
+                  </Link>
+                )}
                 {shariaActive && (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500/15 text-teal-700 dark:text-teal-300 border border-teal-500/30">
                     Mode Syariah Aktif
@@ -335,7 +360,10 @@ export default function FinancialPlannerPage() {
                   ) : m.content ? (
                     <FormattedAssistantMessage content={m.content} />
                   ) : isStreaming ? (
-                    <span className="text-muted-foreground animate-pulse">Sedang meracik jawaban...</span>
+                    <span className="text-muted-foreground animate-pulse flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-[#f0b000] animate-ping" />
+                      <span>{toolStatus || "Sedang meracik jawaban..."}</span>
+                    </span>
                   ) : (
                     ""
                   )}
@@ -350,6 +378,7 @@ export default function FinancialPlannerPage() {
         <div className="px-4 py-2 border-t border-border bg-secondary/30 flex items-center gap-2 overflow-x-auto text-xs">
           <span className="text-[11px] text-muted-foreground shrink-0 font-medium">Topik Cepat:</span>
           {[
+            "Bahas hasil analisis swarm investasi terakhir saya",
             "Berapa harga emas antam dan kurs dollar hari ini?",
             "Bagaimana prospek ORI / SBN ritel terbaru?",
             "Bedah kesehatan finansial 360°",

@@ -113,6 +113,19 @@ SKILL_KEYWORDS: Dict[str, List[str]] = {
         "alokasi aset",
         "deposito",
         "bibit",
+        "swarm",
+        "analisis",
+        "riset",
+        "fundamental",
+        "valuasi",
+        "fair value",
+        "margin of safety",
+        "piotroski",
+        "akumulasi",
+        "ihsg",
+        "bbca",
+        "aapl",
+        "btc",
     ],
     "life_goals_planning": [
         "nikah",
@@ -358,6 +371,11 @@ def build_planner_system_prompt(
     categories_lines = financial_context.get("category_spending_text", "- Belum ada transaksi pengeluaran tercatat")
     budgets_lines = financial_context.get("budget_alerts_text", "- Belum ada anggaran aktif")
     memory_lines = financial_context.get("memory_notes_text", "- Belum ada catatan khusus dari obrolan")
+    swarm_analyses_text = financial_context.get(
+        "recent_swarm_analyses_text",
+        "  • Belum ada riwayat analisis Swarm Agent yang tersimpan.",
+    )
+    swarm_count = financial_context.get("recent_analyses_count", 0)
     missing_hints = financial_context.get("missing_profile_hints", [])
     missing_text = ", ".join(missing_hints) if missing_hints else "Seluruh profil inti sudah terkonfirmasi (100%)"
 
@@ -387,7 +405,16 @@ def build_planner_system_prompt(
 - Catatan Memori Konteks Hidup User:
 {memory_lines}
 - Kelengkapan Profil Personalisasi: {financial_context.get('profile_completeness_pct', 0)}% (Belum dikonfirmasi: {missing_text})
-[/VERIFIED USER FINANCIAL SNAPSHOT]"""
+[/VERIFIED USER FINANCIAL SNAPSHOT]
+
+[RECENT SWARM INVESTMENT ANALYSES (LATEST {swarm_count} OF 5)]
+{swarm_analyses_text}
+[/RECENT SWARM INVESTMENT ANALYSES]
+
+[LIVE TOOLS & CONTINUOUS RESEARCH CAPABILITY]
+- Kamu memiliki akses langsung ke 5 hasil analisis Swarm Agent terakhir di atas (termasuk stance, 3 Zona Harga Investasi, FMP DCF/F-Score/Z-Score/ROIC, risiko CAGR/MaxDrawdown, DCA compounding, dan konsentrasi portofolio). Gunakan data tersebut untuk berdiskusi secara berkelanjutan dengan user.
+- Jika data yang ditanyakan user TIDAK tersedia di snapshot di atas (misalnya ticker saham/ETF/crypto baru, berita terbaru, kurs/regulasi terkini, atau detail lengkap laporan agen dari salah satu `run_id`), WAJIB panggil tool yang sesuai (`fetch_asset_market_and_fundamentals`, `search_internet_live`, atau `get_investment_analysis_detail`) — JANGAN mengarang angka atau menebak dari memori.
+[/LIVE TOOLS & CONTINUOUS RESEARCH CAPABILITY]"""
 
     web_section = ""
     if web_search_context and web_search_context.strip():

@@ -39,6 +39,7 @@ from app.services.planner_skills_loader import (
     route_planner_skills,
     save_confirmed_fields_set,
 )
+from app.services.planner_tools import build_recent_swarm_analyses_context
 from app.services.router_service import router_service
 
 router = APIRouter(prefix="/planner", tags=["AI Financial Planner"])
@@ -244,6 +245,7 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
 
     notes_lines = [f"  • {n}" for n in (profile.memory_notes or "").splitlines() if n.strip()]
     memory_notes_text = "\n".join(notes_lines) if notes_lines else "  • Belum ada catatan khusus dari obrolan"
+    swarm_ctx = build_recent_swarm_analyses_context(db, user.id, limit=5)
 
     context = {
         "base_currency": user.base_currency,
@@ -276,6 +278,8 @@ def build_planner_overview(user: User, db: Session) -> Dict[str, Any]:
         "category_spending_text": category_spending_text,
         "budget_alerts_text": budget_alerts_text,
         "memory_notes_text": memory_notes_text,
+        "recent_analyses_count": swarm_ctx["count"],
+        "recent_swarm_analyses_text": swarm_ctx["summary_text"],
         "income_confirmation_label": income_label,
         "expense_confirmation_label": expense_label,
         "debt_confirmation_label": "TERKONFIRMASI USER" if flags["debt_ready"] else "BELUM DIKONFIRMASI USER — asumsi Rp 0",
@@ -472,6 +476,7 @@ async def chat_with_planner(
         "profile_updated": mem_result["updated"],
         "updated_fields": mem_result["updated_fields"],
         "profile_completeness_pct": financial_context["profile_completeness_pct"],
+        "recent_analyses_count": financial_context.get("recent_analyses_count", 0),
     }
 
     # Compact snapshot for DB storage
@@ -486,13 +491,22 @@ async def chat_with_planner(
         yield f"data: {json.dumps({'meta': meta_payload})}\n\n"
 
         collected_response: List[str] = []
-        async for chunk in router_service.generate_planner_response_stream(
+        async for event in router_service.generate_planner_response_stream(
             conversation_history=history,
             financial_context=financial_context,
             routing=routing,
+            user_id=user_id,
+            emit_status=True,
         ):
-            collected_response.append(chunk)
-            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+            if isinstance(event, dict):
+                if event.get("status"):
+                    yield f"data: {json.dumps({'status': event['status']})}\n\n"
+                if event.get("chunk"):
+                    collected_response.append(event["chunk"])
+                    yield f"data: {json.dumps({'chunk': event['chunk']})}\n\n"
+            elif isinstance(event, str) and event:
+                collected_response.append(event)
+                yield f"data: {json.dumps({'chunk': event})}\n\n"
 
         full_reply = "".join(collected_response)
         if full_reply:
@@ -542,6 +556,7 @@ async def ask_planner_direct(user: User, message: str, db: Session) -> str:
         conversation_history=history,
         financial_context=financial_context,
         routing=routing,
+        user_id=user.id,
     )
 
     if reply:

@@ -3,11 +3,16 @@ import base64
 import json
 import logging
 import re
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, Union
 import httpx
 
 from app.config import settings
 from app.services.planner_skills_loader import build_planner_system_prompt, route_planner_skills
+from app.services.planner_tools import (
+    PLANNER_TOOLS_SCHEMA,
+    describe_planner_tool_call,
+    execute_planner_tool,
+)
 from app.services.web_search_service import (
     format_search_results_for_prompt,
     search_internet,
@@ -124,8 +129,10 @@ class RouterService:
         conversation_history: list[dict],
         financial_context: dict,
         routing: Optional[dict] = None,
-    ) -> AsyncGenerator[str, None]:
-        """Streams conversational guidance using modular AI Financial Planner skills via 9router."""
+        user_id: Optional[str] = None,
+        emit_status: bool = False,
+    ) -> AsyncGenerator[Union[str, Dict[str, str]], None]:
+        """Streams conversational guidance with hybrid LLM tool-calling + modular AI Financial Planner skills via 9router."""
         latest_user_msg = ""
         for item in reversed(conversation_history):
             if item.get("role") == "user":
@@ -136,8 +143,10 @@ class RouterService:
 
         web_search_context = ""
         if should_search_internet(latest_user_msg):
+            if emit_status:
+                yield {"status": "Mengambil data pasar & berita terkini..."}
             try:
-                results = search_internet(latest_user_msg, max_results=4)
+                results = await asyncio.to_thread(search_internet, latest_user_msg, 4)
                 web_search_context = format_search_results_for_prompt(results)
             except Exception as e:
                 logger.debug("Live web search notice: %s", e)
@@ -149,7 +158,7 @@ class RouterService:
             web_search_context=web_search_context,
         )
 
-        messages_payload = [{"role": "system", "content": system_instruction}]
+        messages_payload: list[dict[str, Any]] = [{"role": "system", "content": system_instruction}]
         for m in conversation_history:
             messages_payload.append(
                 {
@@ -158,14 +167,85 @@ class RouterService:
                 }
             )
 
+        url = f"{self.base_url}/chat/completions"
+
+        def _emit_chunk(text: str) -> Union[str, Dict[str, str]]:
+            return {"chunk": text} if emit_status else text
+
+        # Phase 1: Hybrid Tool-Calling Loop (max 3 iterations)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                for _ in range(3):
+                    tool_payload = {
+                        "model": self.model,
+                        "messages": messages_payload,
+                        "tools": PLANNER_TOOLS_SCHEMA,
+                        "tool_choice": "auto",
+                        "stream": False,
+                        "temperature": 0.65,
+                    }
+                    res = await client.post(url, json=tool_payload, headers=self._headers())
+                    if res.status_code in (400, 404, 422):
+                        # Provider/model does not support tools; fall back to standard streaming
+                        logger.info("9router tools unsupported (HTTP %s); falling back to standard stream", res.status_code)
+                        break
+                    if res.status_code != 200:
+                        logger.error("9router tool-calling error: %s %s", res.status_code, res.text)
+                        yield _emit_chunk(
+                            f"Maaf, koneksi ke 9router AI sedang terkendala (HTTP {res.status_code}). Coba kirim ulang sebentar lagi ya."
+                        )
+                        return
+
+                    res_json = res.json()
+                    msg = (res_json.get("choices") or [{}])[0].get("message") or {}
+                    tool_calls = msg.get("tool_calls") or []
+                    if tool_calls:
+                        messages_payload.append(
+                            {
+                                "role": "assistant",
+                                "content": msg.get("content") or "",
+                                "tool_calls": tool_calls,
+                            }
+                        )
+                        for idx, tc in enumerate(tool_calls):
+                            fn = tc.get("function") or {}
+                            fn_name = fn.get("name", "")
+                            raw_args = fn.get("arguments") or "{}"
+                            try:
+                                fn_args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+                            except Exception:
+                                fn_args = {}
+                            if emit_status:
+                                yield {"status": describe_planner_tool_call(fn_name, fn_args)}
+                            _, tool_result = await asyncio.to_thread(
+                                execute_planner_tool, fn_name, fn_args, user_id
+                            )
+                            messages_payload.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc.get("id") or f"call_{idx}_{fn_name}",
+                                    "name": fn_name,
+                                    "content": tool_result,
+                                }
+                            )
+                        continue
+
+                    final_text = (msg.get("content") or "").strip()
+                    if final_text:
+                        yield _emit_chunk(final_text)
+                        return
+                    break
+        except Exception as e:
+            logger.error("9router tool-calling exception: %s", e)
+            # Fall through to standard streaming / offline snapshot fallback below
+
+        # Phase 2: Standard Streaming (after tool loop or tool fallback)
         payload = {
             "model": self.model,
             "messages": messages_payload,
             "stream": True,
             "temperature": 0.65,
         }
-
-        url = f"{self.base_url}/chat/completions"
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -177,7 +257,9 @@ class RouterService:
                             response.status_code,
                             err_body.decode("utf-8", errors="ignore"),
                         )
-                        yield f"Maaf, koneksi ke 9router AI sedang terkendala (HTTP {response.status_code}). Coba kirim ulang sebentar lagi ya."
+                        yield _emit_chunk(
+                            f"Maaf, koneksi ke 9router AI sedang terkendala (HTTP {response.status_code}). Coba kirim ulang sebentar lagi ya."
+                        )
                         return
 
                     async for line in response.aiter_lines():
@@ -192,7 +274,7 @@ class RouterService:
                             delta = chunk_data.get("choices", [{}])[0].get("delta", {})
                             content_piece = delta.get("content", "")
                             if content_piece:
-                                yield content_piece
+                                yield _emit_chunk(content_piece)
                         except json.JSONDecodeError:
                             continue
 
@@ -206,7 +288,7 @@ class RouterService:
                 "Sambil menunggu koneksi AI pulih, mau kita fokus beresin bantalan dana darurat dulu atau cek pos anggaran bulan ini?",
             ]
             for part in fallback_parts:
-                yield part
+                yield _emit_chunk(part)
                 await asyncio.sleep(0.03)
 
     async def generate_cfp_response_stream(
@@ -223,13 +305,15 @@ class RouterService:
         conversation_history: list[dict],
         financial_context: dict,
         routing: Optional[dict] = None,
+        user_id: Optional[str] = None,
     ) -> str:
         """Generates a complete non-streaming response for Telegram/WhatsApp bot users."""
         chunks: list[str] = []
         async for chunk in self.generate_planner_response_stream(
-            conversation_history, financial_context, routing
+            conversation_history, financial_context, routing, user_id=user_id, emit_status=False
         ):
-            chunks.append(chunk)
+            if isinstance(chunk, str):
+                chunks.append(chunk)
         return "".join(chunks).strip()
 
 

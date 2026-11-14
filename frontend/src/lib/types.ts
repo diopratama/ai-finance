@@ -684,6 +684,7 @@ export interface PlannerHealthContext {
   health_status: string;
   profile_completeness_pct?: number;
   missing_profile_hints?: string[];
+  recent_analyses_count?: number;
 }
 
 export interface PersonalProfile {
@@ -709,6 +710,7 @@ export interface PlannerStreamMeta {
   profile_updated: boolean;
   updated_fields: string[];
   profile_completeness_pct: number;
+  recent_analyses_count?: number;
 }
 
 export interface PlannerMessage {

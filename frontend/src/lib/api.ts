@@ -659,6 +659,7 @@ export async function sendPlannerMessageStream(
   message: string,
   onChunk: (chunk: string) => void,
   onMeta?: (meta: PlannerStreamMeta) => void,
+  onStatus?: (status: string) => void,
 ): Promise<void> {
   const url = `${API_BASE}/api/v1/planner/chat`;
   const res = await fetch(url, {
@@ -700,6 +701,9 @@ export async function sendPlannerMessageStream(
           const parsed = JSON.parse(dataStr);
           if (parsed.meta && onMeta) {
             onMeta(parsed.meta as PlannerStreamMeta);
+          }
+          if (parsed.status && onStatus) {
+            onStatus(String(parsed.status));
           }
           if (parsed.chunk) {
             onChunk(parsed.chunk);
